@@ -6,6 +6,7 @@ import { type Address, isAddress } from "viem";
 import { ATTRIBUTION_TAG, config } from "./config";
 import { chain } from "./chain";
 import { dryRun, readPolicy } from "./vault";
+import { buildPaymentMiddleware, PAID_ROUTE, x402Enabled } from "./x402/seller";
 
 const app = new Hono();
 
@@ -16,8 +17,20 @@ app.get("/health", (c) =>
     network: config.network,
     chainId: chain.id,
     attributionTag: ATTRIBUTION_TAG,
+    x402: x402Enabled(),
   }),
 );
+
+// Seller flow (Track 2): mount the paid route only when configured (API key + payTo).
+if (x402Enabled()) {
+  app.use(buildPaymentMiddleware());
+  app.get(PAID_ROUTE, (c) =>
+    c.json({
+      advice: "KaneAI: define your paid product here.",
+      attributionTag: ATTRIBUTION_TAG,
+    }),
+  );
+}
 
 // Read the on-chain policy for a vault.
 app.get("/policy/:vault", async (c) => {
