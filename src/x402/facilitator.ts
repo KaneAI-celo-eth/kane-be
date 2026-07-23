@@ -3,21 +3,17 @@
 
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { config } from "../config";
+import { X402 } from "../constants";
 
-export const FACILITATOR_URL =
-  config.x402.network === "mainnet"
-    ? "https://api.x402.celo.org"
-    : "https://api.x402.sepolia.celo.org";
+const net = config.x402.network; // "mainnet" | "testnet"
+
+export const FACILITATOR_URL = X402[net].facilitator;
 
 /** CAIP-2 network id for the active x402 network. */
-export const X402_NETWORK: `eip155:${string}` =
-  config.x402.network === "mainnet" ? "eip155:42220" : "eip155:11142220";
+export const X402_NETWORK: `eip155:${string}` = X402[net].caip2;
 
 /** Canonical USDC (6 decimals, EIP-3009) for the active network. */
-export const X402_USDC =
-  config.x402.network === "mainnet"
-    ? "0xcebA9300f2b948710d2653dD7B07f33A8B32118C"
-    : "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
+export const X402_USDC = X402[net].usdc;
 
 export const facilitator = new HTTPFacilitatorClient({
   url: FACILITATOR_URL,
