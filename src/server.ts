@@ -4,8 +4,9 @@
 import { Hono } from "hono";
 import { type Address, isAddress } from "viem";
 import { ATTRIBUTION_TAG, config } from "./config";
-import { chain } from "./chain";
+import { agentAddress, chain } from "./chain";
 import { dryRun, readPolicy } from "./vault";
+import { propose, type ProposedAction } from "./agent";
 import { buildPaymentMiddleware, PAID_ROUTE, x402Enabled } from "./x402/seller";
 
 const app = new Hono();
@@ -59,6 +60,32 @@ app.post("/dry-run", async (c) => {
   return c.json(result);
 });
 
-// TODO(tuning): POST /intent — propose (agent.ts) -> dry-run -> execute (vault.ts).
+// Propose an action from natural language, then dry-run it against the on-chain
+// gate. Does NOT execute — execution stays a separate, explicit step.
+app.post("/intent", async (c) => {
+  const body = await c.req.json<{ intent?: string; vault?: string }>();
+  if (!body?.intent) return c.json({ error: "intent required" }, 400);
+
+  const action = await propose(body.intent);
+  const res: Record<string, unknown> = { action: serializeAction(action) };
+
+  if (action.kind === "transfer" && body.vault && isAddress(body.vault)) {
+    const agent = agentAddress();
+    if (agent) {
+      const policy = await readPolicy(body.vault as Address);
+      res.dryRun = await dryRun(body.vault as Address, agent, action.amount, policy.version);
+    }
+  }
+  return c.json(res);
+});
+
+function serializeAction(a: ProposedAction) {
+  if (a.kind === "transfer") return { kind: a.kind, to: a.to, amount: a.amount.toString(), memo: a.memo };
+  if (a.kind === "spend") {
+    return { kind: a.kind, protocol: a.protocol, amount: a.amount.toString(), callData: a.callData, memo: a.memo };
+  }
+  return { kind: a.kind, reason: a.reason };
+}
 
 export default { port: config.port, fetch: app.fetch };
+

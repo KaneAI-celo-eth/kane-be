@@ -40,3 +40,9 @@ export function getWalletClient() {
   const account = privateKeyToAccount(config.agentPrivateKey);
   return createWalletClient({ account, chain, transport });
 }
+
+/** The delegated agent's address, or undefined if no key is configured. */
+export function agentAddress(): `0x${string}` | undefined {
+  if (!config.agentPrivateKey) return undefined;
+  return privateKeyToAccount(config.agentPrivateKey).address;
+}
