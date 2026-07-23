@@ -16,7 +16,8 @@ allows — every transaction carrying KaneAI's attribution tag.
 | `src/abi.ts` | Vault / factory / ERC-20 ABIs. |
 | `src/vault.ts` | Read policy, dry-run (`wouldAllow`), execute bounded exits tagged. |
 | `src/agent.ts` | The advisor: intent → proposed action (LLM proposer — WIP). |
-| `src/server.ts` | Hono HTTP gateway. |
+| `src/x402/*` | x402 pay-per-request (Track 2): seller (paid route) + buyer (auto-pay `fetch`) via the hosted Celo facilitator. |
+| `src/server.ts` | Hono HTTP gateway (mounts the x402 paid route when configured). |
 | `src/cli.ts` | CLI (`info`, `policy`). |
 
 ## Run
