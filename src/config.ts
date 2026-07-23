@@ -19,5 +19,14 @@ export const config = {
     baseUrl: process.env.LLM_BASE_URL ?? "https://api.openai.com/v1",
     model: process.env.LLM_MODEL ?? "gpt-4o-mini",
   },
+  x402: {
+    // Seller: facilitator credits key (from https://x402.celo.org dashboard).
+    apiKey: process.env.X402_API_KEY || undefined,
+    network: (process.env.X402_NETWORK === "mainnet" ? "mainnet" : "testnet") as "mainnet" | "testnet",
+    // Seller's own receiving wallet (gets the USDC). Track-2 settlements are counted for this address.
+    payTo: process.env.X402_PAY_TO as `0x${string}` | undefined,
+    // Price per paid request, in USDC base units (6 decimals). "10000" = $0.01.
+    price: process.env.X402_PRICE ?? "10000",
+  },
   port: Number(process.env.PORT ?? 8787),
 } as const;
