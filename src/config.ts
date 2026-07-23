@@ -15,9 +15,10 @@ export const config = {
   factoryAddress: process.env.FACTORY_ADDRESS as `0x${string}` | undefined,
   vaultAddress: process.env.VAULT_ADDRESS as `0x${string}` | undefined,
   llm: {
-    apiKey: process.env.LLM_API_KEY || undefined,
-    baseUrl: process.env.LLM_BASE_URL ?? "https://api.openai.com/v1",
-    model: process.env.LLM_MODEL ?? "gpt-4o-mini",
+    // OpenAI-compatible endpoint (default: dgrid.ai). Key env var is AI_AUTH_TOKEN.
+    apiKey: process.env.AI_AUTH_TOKEN || undefined,
+    baseUrl: process.env.LLM_BASE_URL ?? "https://api.dgrid.ai/v1",
+    model: process.env.LLM_MODEL ?? "anthropic/claude-haiku-4.5",
   },
   x402: {
     // Seller: facilitator credits key (from https://x402.celo.org dashboard).
