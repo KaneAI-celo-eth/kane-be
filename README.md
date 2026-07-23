@@ -15,9 +15,10 @@ allows — every transaction carrying KaneAI's attribution tag.
 | `src/attribution.ts` | ERC-8021 tagging — appends KaneAI's tag to every tx (Track 1 & 2 credit). |
 | `src/abi.ts` | Vault / factory / ERC-20 ABIs. |
 | `src/vault.ts` | Read policy, dry-run (`wouldAllow`), execute bounded exits tagged. |
-| `src/agent.ts` | The advisor: intent → proposed action (LLM proposer — WIP). |
+| `src/llm.ts` | OpenAI-compatible chat client (default: Claude Haiku on dgrid.ai). |
+| `src/agent.ts` | The advisor: intent → validated `ProposedAction` (transfer or noop) via the LLM. |
 | `src/x402/*` | x402 pay-per-request (Track 2): seller (paid route) + buyer (auto-pay `fetch`) via the hosted Celo facilitator. |
-| `src/server.ts` | Hono HTTP gateway (mounts the x402 paid route when configured). |
+| `src/server.ts` | Hono HTTP gateway: `/health`, `/policy`, `/dry-run`, `/intent` (propose + dry-run); mounts the x402 paid route when configured. |
 | `src/cli.ts` | CLI (`info`, `policy`). |
 
 ## Run
