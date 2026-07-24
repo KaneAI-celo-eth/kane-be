@@ -1,11 +1,25 @@
 // HTTP gateway for the KaneAI agent (Hono). One of several interfaces
-// (gateway / CLI / Telegram) that share the same agent + vault mapping.
+// (gateway / CLI / Telegram) that share the same agent + executor mapping.
+//
+// Executor model (v2.1, non-custodial): /policy reads a per-token policy, /dry-run asks
+// the gate whether a pull is allowed, /intent proposes + dry-runs (no send), and the
+// guarded /execute proposes → dry-runs → sends an attribution-tagged execute() as the agent.
 
 import { Hono } from "hono";
 import { type Address, isAddress } from "viem";
 import { ATTRIBUTION_TAG, config } from "./config";
 import { agentAddress, chain } from "./chain";
-import { dryRun, readPolicy } from "./vault";
+import { TOKENS } from "./constants";
+import {
+  buildRebalance,
+  readTokenPolicy,
+  readVersion,
+  resolveAToken,
+  resolveExecutor,
+  sendExecute,
+  wouldAllowPull,
+  type BuiltExecute,
+} from "./executor";
 import { propose, type ProposedAction } from "./agent";
 import { buildPaymentMiddleware, PAID_ROUTE, x402Enabled } from "./x402/seller";
 
@@ -33,59 +47,120 @@ if (x402Enabled()) {
   );
 }
 
-// Read the on-chain policy for a vault.
-app.get("/policy/:vault", async (c) => {
-  const vault = c.req.param("vault");
-  if (!isAddress(vault)) return c.json({ error: "invalid vault address" }, 400);
-  const p = await readPolicy(vault as Address);
-  return c.json({
-    agent: p.agent,
-    version: p.version,
-    revoked: p.revoked,
-    budget: p.budget.toString(),
-    spent: p.spent.toString(),
-    perTxCap: p.perTxCap.toString(),
-    windowCap: p.windowCap.toString(),
-    expiry: p.expiry.toString(),
-  });
-});
+// Read the on-chain per-token policy: /policy?executor=0x..&token=0x..
+app.get("/policy", async (c) => {
+  const executor = c.req.query("executor");
+  const token = c.req.query("token");
+  if (!executor || !isAddress(executor)) return c.json({ error: "invalid or missing executor address" }, 400);
+  if (!token || !isAddress(token)) return c.json({ error: "invalid or missing token address" }, 400);
 
-// Dry-run a spend against the gate (no transaction sent).
-app.post("/dry-run", async (c) => {
-  const body = await c.req.json<{ vault: string; caller: string; amount: string; version: number }>();
-  if (!isAddress(body.vault) || !isAddress(body.caller)) {
-    return c.json({ error: "invalid address" }, 400);
+  try {
+    const p = await readTokenPolicy(executor as Address, token as Address);
+    return c.json({
+      executor,
+      token,
+      perTxCap: p.perTxCap.toString(),
+      budget: p.budget.toString(),
+      spent: p.spent.toString(),
+      windowCap: p.windowCap.toString(),
+      windowSpent: p.windowSpent.toString(),
+      windowDuration: p.windowDuration.toString(),
+      windowStart: p.windowStart.toString(),
+    });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
   }
-  const result = await dryRun(body.vault as Address, body.caller as Address, BigInt(body.amount), body.version);
-  return c.json(result);
 });
 
-// Propose an action from natural language, then dry-run it against the on-chain
-// gate. Does NOT execute — execution stays a separate, explicit step.
+// Dry-run a pull against the gate (no transaction sent).
+app.post("/dry-run", async (c) => {
+  const body = await c.req.json<{ executor?: string; token?: string; amount?: string }>();
+  if (!body?.executor || !isAddress(body.executor)) return c.json({ error: "invalid or missing executor" }, 400);
+  if (!body?.token || !isAddress(body.token)) return c.json({ error: "invalid or missing token" }, 400);
+  if (!body?.amount) return c.json({ error: "amount required" }, 400);
+
+  try {
+    const result = await wouldAllowPull(body.executor as Address, body.token as Address, BigInt(body.amount));
+    return c.json(result);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+// Propose an action from natural language, then dry-run it against the on-chain gate.
+// Does NOT execute — execution stays a separate, explicit step (/execute).
 app.post("/intent", async (c) => {
-  const body = await c.req.json<{ intent?: string; vault?: string }>();
+  const body = await c.req.json<{ intent?: string; owner?: string }>();
   if (!body?.intent) return c.json({ error: "intent required" }, 400);
 
   const action = await propose(body.intent);
   const res: Record<string, unknown> = { action: serializeAction(action) };
 
-  if (action.kind === "transfer" && body.vault && isAddress(body.vault)) {
-    const agent = agentAddress();
-    if (agent) {
-      const policy = await readPolicy(body.vault as Address);
-      res.dryRun = await dryRun(body.vault as Address, agent, action.amount, policy.version);
+  if (action.kind !== "noop" && body.owner && isAddress(body.owner)) {
+    try {
+      const executor = await resolveExecutor(body.owner as Address);
+      const token = await pullToken(action.kind);
+      res.executor = executor;
+      res.dryRun = await wouldAllowPull(executor, token, action.amount);
+    } catch (e) {
+      res.error = (e as Error).message; // unresolved executor / config gap — clear error, no crash
     }
   }
   return c.json(res);
 });
 
-function serializeAction(a: ProposedAction) {
-  if (a.kind === "transfer") return { kind: a.kind, to: a.to, amount: a.amount.toString(), memo: a.memo };
-  if (a.kind === "spend") {
-    return { kind: a.kind, protocol: a.protocol, amount: a.amount.toString(), callData: a.callData, memo: a.memo };
+// Guarded end-to-end: propose → dry-run → send the attribution-tagged execute() as the agent.
+app.post("/execute", async (c) => {
+  if (!agentAddress()) return c.json({ error: "agent key not configured (AGENT_PRIVATE_KEY)" }, 403);
+
+  const body = await c.req.json<{ intent?: string; owner?: string }>();
+  if (!body?.intent) return c.json({ error: "intent required" }, 400);
+  if (!body?.owner || !isAddress(body.owner)) return c.json({ error: "invalid or missing owner" }, 400);
+  const owner = body.owner as Address;
+
+  const action = await propose(body.intent);
+  if (action.kind === "noop") return c.json({ action: serializeAction(action), executed: false });
+
+  try {
+    const executor = await resolveExecutor(owner);
+    const network = config.network;
+
+    let built: BuiltExecute;
+    let token: Address;
+    if (action.kind === "supply") {
+      token = usdcAddress();
+      built = buildRebalance({ kind: "supply", amount: action.amount, owner, network });
+    } else {
+      const aToken = await resolveAToken(network);
+      token = aToken;
+      built = buildRebalance({ kind: "withdraw", amount: action.amount, owner, network, aToken });
+    }
+
+    const dryRun = await wouldAllowPull(executor, token, action.amount);
+    if (!dryRun.ok) return c.json({ action: serializeAction(action), executed: false, dryRun });
+
+    const version = await readVersion(executor);
+    const txHash = await sendExecute(executor, built, version);
+    return c.json({ action: serializeAction(action), executed: true, txHash, dryRun });
+  } catch (e) {
+    return c.json({ action: serializeAction(action), executed: false, error: (e as Error).message }, 502);
   }
-  return { kind: a.kind, reason: a.reason };
+});
+
+/** The token pulled for a given action kind: USDC for supply, aUSDC for withdraw. */
+async function pullToken(kind: "supply" | "withdraw"): Promise<Address> {
+  return kind === "supply" ? usdcAddress() : resolveAToken(config.network);
+}
+
+function usdcAddress(): Address {
+  const usdc = TOKENS[config.network]?.USDC;
+  if (!usdc) throw new Error(`USDC not configured for network ${config.network}`);
+  return usdc.address;
+}
+
+function serializeAction(a: ProposedAction) {
+  if (a.kind === "noop") return { kind: a.kind, reason: a.reason };
+  return { kind: a.kind, amount: a.amount.toString() };
 }
 
 export default { port: config.port, fetch: app.fetch };
-

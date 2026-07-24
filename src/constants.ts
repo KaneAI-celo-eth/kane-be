@@ -48,10 +48,30 @@ export const TOKENS: Record<Network, Record<string, TokenInfo>> = {
   },
 };
 
-/** Deployed KaneVaultFactory per chainId (public; filled in after each deploy). */
-export const DEPLOYMENTS: Record<number, { factory?: Address }> = {
+/**
+ * Deployed KaneExecutor stack per chainId (public; filled in after each deploy).
+ * `factory` = KaneExecutorFactory, `beacon` = KaneBeacon, `implementation` = KaneExecutor logic.
+ * Empty until the mainnet deploy lands (migration ships address-driven, deploy-deferred).
+ */
+export const DEPLOYMENTS: Record<
+  number,
+  { factory?: Address; beacon?: Address; implementation?: Address }
+> = {
   [CHAINS.celo.id]: {},
   [CHAINS.celo_sepolia.id]: {},
+};
+
+/**
+ * Aave V3 addresses per network — the demo rebalance venue (supply/withdraw).
+ * Aave V3 is live on Celo MAINNET only. Sourced from Celopedia
+ * `references/contracts.md` → DeFi Protocol Contracts (Mainnet) → Aave V3
+ * (Pool + ProtocolDataProvider). Do not invent addresses.
+ */
+export const AAVE: Partial<Record<Network, { pool: Address; dataProvider: Address }>> = {
+  celo: {
+    pool: "0x3E59A31363E2ad014dcbc521c4a0d5757d9f3402",
+    dataProvider: "0x2e0f8D3B1631296cC7c56538D6Eb6032601E15ED",
+  },
 };
 
 /** ERC-8004 Identity Registry per network. */
