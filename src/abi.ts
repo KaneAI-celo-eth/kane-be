@@ -70,6 +70,22 @@ export const aavePoolAbi = parseAbi([
   "function withdraw(address asset, uint256 amount, address to) returns (uint256)",
 ]);
 
+// Ubeswap V2 (Uniswap-V2 fork) router + factory + pair — for swap quotes, execution, and the
+// pool-depth guard (reserves) required before broadcasting any swap.
+export const ubeswapRouterAbi = parseAbi([
+  "function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)",
+  "function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)",
+]);
+
+export const ubeswapFactoryAbi = parseAbi([
+  "function getPair(address tokenA, address tokenB) view returns (address pair)",
+]);
+
+export const ubeswapPairAbi = parseAbi([
+  "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+  "function token0() view returns (address)",
+]);
+
 // Aave V3 ProtocolDataProvider — resolves the aToken (aUSDC) for the withdraw pull, and reads
 // the live reserve data (we use `liquidityRate` = supply APR, in ray, for real-time answers).
 export const aaveDataProviderAbi = parseAbi([

@@ -7,11 +7,19 @@
 // the recipient is ALWAYS the owner (never caller-supplied), matching the executor's
 // on-chain recipient binding (Aave supply.onBehalfOf / withdraw.to at word index 2).
 
-import { encodeFunctionData, zeroAddress, type Address, type Hex } from "viem";
+import { encodeFunctionData, formatUnits, parseUnits, zeroAddress, type Address, type Hex } from "viem";
 import { chain, getWalletClient, publicClient } from "./chain";
 import { config, type Network } from "./config";
-import { AAVE, TOKENS } from "./constants";
-import { aaveDataProviderAbi, aavePoolAbi, kaneExecutorAbi, kaneExecutorFactoryAbi } from "./abi";
+import { AAVE, TOKENS, UBESWAP } from "./constants";
+import {
+  aaveDataProviderAbi,
+  aavePoolAbi,
+  kaneExecutorAbi,
+  kaneExecutorFactoryAbi,
+  ubeswapFactoryAbi,
+  ubeswapPairAbi,
+  ubeswapRouterAbi,
+} from "./abi";
 import { tagCalldata } from "./attribution";
 
 // ---- types -----------------------------------------------------------------
@@ -194,6 +202,163 @@ export function buildRebalance(params: RebalanceParams): BuiltExecute {
     pulls: [{ token: params.aToken, amount }],
     approvals: [],
     calls: [{ target: pool, value: 0n, data }],
+  };
+}
+
+// ---- swap (Ubeswap V2) -----------------------------------------------------
+
+const SWAP_SLIPPAGE_BPS = 100n; // 1% max slippage → amountOutMin
+const MAX_PRICE_IMPACT_BPS = 1000n; // guard: reject if amountIn > 10% of the input-token pool reserve
+
+export interface SwapQuote {
+  fromSymbol: string;
+  toSymbol: string;
+  path: Address[];
+  amountIn: bigint;
+  amountOut: bigint;
+  amountOutMin: bigint;
+  /** Human-readable output (toToken decimals). */
+  amountOutHuman: string;
+}
+
+/** Resolve a token symbol (case-insensitive) to its on-chain address + decimals. */
+export function resolveToken(network: Network, symbol: string): { address: Address; decimals: number } {
+  const tokens = TOKENS[network] ?? {};
+  const key = Object.keys(tokens).find((k) => k.toLowerCase() === symbol.toLowerCase());
+  const t = key ? tokens[key] : undefined;
+  if (!t) throw new Error(`token ${symbol} not supported on ${network}`);
+  return t;
+}
+
+/** Read the input-token reserve of a Ubeswap pair for the pool-depth guard. */
+async function inputReserve(factory: Address, tokenIn: Address, tokenOut: Address): Promise<bigint> {
+  const pair = await publicClient.readContract({
+    address: factory,
+    abi: ubeswapFactoryAbi,
+    functionName: "getPair",
+    args: [tokenIn, tokenOut],
+  });
+  if (pair === zeroAddress) return 0n;
+  const [r0, r1] = await publicClient.readContract({
+    address: pair,
+    abi: ubeswapPairAbi,
+    functionName: "getReserves",
+  });
+  const token0 = await publicClient.readContract({ address: pair, abi: ubeswapPairAbi, functionName: "token0" });
+  return token0.toLowerCase() === tokenIn.toLowerCase() ? r0 : r1;
+}
+
+/**
+ * Quote a swap on Ubeswap V2 (real on-chain `getAmountsOut`) with a **pool-depth guard**: Celo
+ * pool depth varies wildly, and `amountOutMin` alone can't catch a shallow pool, so we reject
+ * a swap whose input is a large fraction of the pair reserve (excessive price impact). Tries a
+ * direct pair first, then routes via CELO. `amount` is a human decimal string of the from-token.
+ */
+export async function quoteSwap(
+  fromSymbol: string,
+  toSymbol: string,
+  amount: string,
+  network: Network = config.network,
+): Promise<SwapQuote> {
+  const ube = UBESWAP[network];
+  if (!ube) throw new Error(`Ubeswap not configured for network ${network}`);
+  const from = resolveToken(network, fromSymbol);
+  const to = resolveToken(network, toSymbol);
+  if (from.address.toLowerCase() === to.address.toLowerCase()) throw new Error("from and to are the same token");
+
+  const amountIn = parseUnits(amount, from.decimals);
+  if (amountIn <= 0n) throw new Error("amount must be positive");
+
+  // Candidate paths: direct first, then via CELO (weth). Pick the first path where EVERY hop is
+  // deep enough (the swap input at that hop isn't an outsized fraction of the pool reserve). A
+  // shallow FINAL hop is exactly the Celo failure mode that `amountOutMin` alone can't catch.
+  const isWeth = (a: Address) => a.toLowerCase() === ube.weth.toLowerCase();
+  const candidates: Address[][] = [[from.address, to.address]];
+  if (!isWeth(from.address) && !isWeth(to.address)) candidates.push([from.address, ube.weth, to.address]);
+
+  let path: Address[] | undefined;
+  let amounts: readonly bigint[] | undefined;
+  let shallow = false;
+  for (const cand of candidates) {
+    let cAmounts: readonly bigint[];
+    try {
+      cAmounts = await publicClient.readContract({
+        address: ube.router,
+        abi: ubeswapRouterAbi,
+        functionName: "getAmountsOut",
+        args: [amountIn, cand],
+      });
+    } catch {
+      continue; // no pair for this path
+    }
+    let ok = true;
+    for (let i = 0; i < cand.length - 1; i++) {
+      const reserve = await inputReserve(ube.factory, cand[i]!, cand[i + 1]!);
+      if (reserve === 0n || cAmounts[i]! * 10000n > reserve * MAX_PRICE_IMPACT_BPS) {
+        ok = false;
+        shallow = true;
+        break;
+      }
+    }
+    if (ok) {
+      path = cand;
+      amounts = cAmounts;
+      break;
+    }
+  }
+  if (!path || !amounts) {
+    throw new Error(
+      shallow
+        ? `swap too large for the available ${fromSymbol}→${toSymbol} pool depth on Ubeswap V2 — reduce the amount (or this pair's liquidity is on another venue)`
+        : `no Ubeswap V2 pool for ${fromSymbol}→${toSymbol}`,
+    );
+  }
+  const amountOut = amounts[amounts.length - 1];
+  if (amountOut === undefined || amountOut <= 0n) throw new Error("zero output — no liquidity");
+  const amountOutMin = (amountOut * (10000n - SWAP_SLIPPAGE_BPS)) / 10000n;
+
+  return {
+    fromSymbol: fromSymbol.toUpperCase(),
+    toSymbol: toSymbol.toUpperCase(),
+    path,
+    amountIn,
+    amountOut,
+    amountOutMin,
+    amountOutHuman: formatUnits(amountOut, to.decimals),
+  };
+}
+
+/**
+ * Build an `execute` payload for a Ubeswap V2 swap: pull the input from the owner, approve the
+ * router, and call `swapExactTokensForTokens` with `to = owner` (recipient-bound at word 3) and
+ * an `amountOutMin` from {@link quoteSwap}. Output goes straight to the owner (no sweepTokens).
+ */
+export async function buildSwap(params: {
+  fromSymbol: string;
+  toSymbol: string;
+  amount: string;
+  owner: Address;
+  network?: Network;
+  deadlineSeconds?: number;
+}): Promise<BuiltExecute & { quote: SwapQuote }> {
+  const network = params.network ?? config.network;
+  const ube = UBESWAP[network];
+  if (!ube) throw new Error(`Ubeswap not configured for network ${network}`);
+  const quote = await quoteSwap(params.fromSymbol, params.toSymbol, params.amount, network);
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + (params.deadlineSeconds ?? 1200));
+
+  const data = encodeFunctionData({
+    abi: ubeswapRouterAbi,
+    functionName: "swapExactTokensForTokens",
+    args: [quote.amountIn, quote.amountOutMin, quote.path, params.owner, deadline],
+  });
+  const tokenIn = quote.path[0];
+  if (!tokenIn) throw new Error("empty swap path");
+  return {
+    quote,
+    pulls: [{ token: tokenIn, amount: quote.amountIn }],
+    approvals: [{ token: tokenIn, spender: ube.router, amount: quote.amountIn }],
+    calls: [{ target: ube.router, value: 0n, data }],
   };
 }
 

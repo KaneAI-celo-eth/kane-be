@@ -13,6 +13,7 @@ export type ProposedAction =
   | { kind: "answer"; text: string }
   | { kind: "supply"; amount: bigint }
   | { kind: "withdraw"; amount: bigint }
+  | { kind: "swap"; from: string; to: string; amount: string }
   | { kind: "noop"; reason: string };
 
 const noop = (reason: string): ProposedAction => ({ kind: "noop", reason });
@@ -23,12 +24,13 @@ Choose exactly ONE shape:
   {"kind":"answer","text":"<a short, helpful reply grounded ONLY in the Celo facts below>"}
   {"kind":"supply","amount":"<integer string, USDC base units>"}
   {"kind":"withdraw","amount":"<integer string, USDC base units>"}
+  {"kind":"swap","from":"<SYMBOL>","to":"<SYMBOL>","amount":"<human decimal of the FROM token, e.g. \\"100\\">"}
   {"kind":"noop","reason":"<why nothing can be done>"}
 
 How to choose:
 - If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare", "explain") → return "answer". Give a concise, factual reply grounded in the Celo facts provided. When a "LIVE DATA" block is present, quote those exact numbers (e.g. the current Aave USDC supply APR). If a specific number is NOT given, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
 - If the user gives a COMMAND to move funds ("put / move / deposit / withdraw N USDC") → return "supply" or "withdraw". amount = USDC BASE UNITS (6 decimals, so 1 USDC = "1000000"), a positive integer.
-- Only "supply"/"withdraw" execute on-chain right now (USDC on Aave V3). Swaps and other venues are NOT executable yet — if the user asks to swap or trade, return "answer" that explains this and offers the supported action.
+- "supply"/"withdraw" move USDC into/out of Aave V3. "swap" trades one token for another on Ubeswap V2 — supported tokens are USDC, USDT, CELO, cUSD, cEUR (from/to are these SYMBOLS; amount is a human decimal of the FROM token). If the user names an unsupported token, return "answer" explaining which tokens are supported.
 - NEVER output an address or any 0x / "to" / "asset" / "pool" field — the runtime resolves ALL addresses and binds recipients to the owner.
 - Keep "text" under ~60 words. Output JSON only.`;
 
@@ -97,6 +99,16 @@ export function parseAction(raw: string): ProposedAction {
     }
     if (amount <= 0n) return noop("amount must be a positive integer");
     return { kind: o.kind, amount };
+  }
+
+  if (o.kind === "swap") {
+    const { from, to, amount } = o;
+    if (typeof from !== "string" || typeof to !== "string") return noop("swap missing from/to symbol");
+    const amt = typeof amount === "number" ? String(amount) : amount;
+    if (typeof amt !== "string" || amt.trim() === "" || !(Number(amt) > 0)) {
+      return noop("swap needs a positive amount");
+    }
+    return { kind: "swap", from: from.toUpperCase(), to: to.toUpperCase(), amount: amt.trim() };
   }
 
   if (o.kind === "noop") return noop(String(o.reason ?? "noop"));

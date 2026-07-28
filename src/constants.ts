@@ -42,6 +42,8 @@ export const TOKENS: Record<Network, Record<string, TokenInfo>> = {
     USDC: { address: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", decimals: 6 },
     USDT: { address: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e", decimals: 6 },
     cUSD: { address: "0x765DE816845861e75A25fCA122bb6898B8B1282a", decimals: 18 },
+    cEUR: { address: "0xD8763CBa276a3738E6DE85b4b3bF5FDed6D6cA73", decimals: 18 },
+    CELO: { address: "0x471EcE3750Da237f93B8E339c536989b8978a438", decimals: 18 },
   },
   celo_sepolia: {
     USDC: { address: "0x01C5C0122039549AD1493B8220cABEdD739BC44E", decimals: 6 },
@@ -78,6 +80,20 @@ export const AAVE: Partial<Record<Network, { pool: Address; dataProvider: Addres
   celo: {
     pool: "0x3E59A31363E2ad014dcbc521c4a0d5757d9f3402",
     dataProvider: "0x2e0f8D3B1631296cC7c56538D6Eb6032601E15ED",
+  },
+};
+
+/**
+ * Ubeswap V2 (Uniswap-V2 fork) on Celo mainnet — the swap venue. Sourced from Celopedia
+ * `references/defi-protocols.md` → Ubeswap. The V2 router's `swapExactTokensForTokens(...,
+ * address to, uint deadline)` puts `to` at a STATIC head word (index 3), so the executor can
+ * bind the recipient to the owner. `WETH` = the wrapped-native intermediary (CELO GoldToken).
+ */
+export const UBESWAP: Partial<Record<Network, { router: Address; factory: Address; weth: Address }>> = {
+  celo: {
+    router: "0xE3D8bd6Aed4F159bc8000a9cD47CffDb95F96121",
+    factory: "0x62d5b84bE28a183aBB507E125B384122D2C25fAE",
+    weth: "0x471EcE3750Da237f93B8E339c536989b8978a438", // CELO
   },
 };
 

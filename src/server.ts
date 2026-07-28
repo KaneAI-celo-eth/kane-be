@@ -13,6 +13,8 @@ import { agentAddress, chain } from "./chain";
 import { TOKENS } from "./constants";
 import {
   buildRebalance,
+  buildSwap,
+  quoteSwap,
   readSupplyApr,
   readTokenPolicy,
   readVersion,
@@ -112,7 +114,7 @@ app.post("/intent", async (c) => {
   const action = await propose(body.intent, config.network, liveFacts);
   const res: Record<string, unknown> = { action: serializeAction(action) };
 
-  // Only fund-moving actions dry-run against the gate; answers/noops don't touch the chain.
+  // Supply/withdraw dry-run against the gate; answers/noops don't touch the chain.
   if ((action.kind === "supply" || action.kind === "withdraw") && body.owner && isAddress(body.owner)) {
     try {
       const executor = await resolveExecutor(body.owner as Address);
@@ -121,6 +123,29 @@ app.post("/intent", async (c) => {
       res.dryRun = await wouldAllowPull(executor, token, action.amount);
     } catch (e) {
       res.error = (e as Error).message; // unresolved executor / config gap — clear error, no crash
+    }
+  }
+
+  // Swap: get a real Ubeswap quote (with the pool-depth guard) + dry-run the input pull.
+  if (action.kind === "swap") {
+    try {
+      const q = await quoteSwap(action.from, action.to, action.amount);
+      res.quote = {
+        from: q.fromSymbol,
+        to: q.toSymbol,
+        amountIn: q.amountIn.toString(),
+        amountOut: q.amountOut.toString(),
+        amountOutHuman: q.amountOutHuman,
+        amountOutMin: q.amountOutMin.toString(),
+        hops: q.path.length - 1,
+      };
+      if (body.owner && isAddress(body.owner)) {
+        const executor = await resolveExecutor(body.owner as Address);
+        res.executor = executor;
+        res.dryRun = await wouldAllowPull(executor, q.path[0]!, q.amountIn);
+      }
+    } catch (e) {
+      res.error = (e as Error).message; // unsupported token / no pool / pool-depth guard / unresolved executor
     }
   }
   return c.json(res);
@@ -136,8 +161,8 @@ app.post("/execute", async (c) => {
   const owner = body.owner as Address;
 
   const action = await propose(body.intent);
-  // Only supply/withdraw execute; answers and noops never touch the chain.
-  if (action.kind !== "supply" && action.kind !== "withdraw") {
+  // Only fund-moving actions execute; answers and noops never touch the chain.
+  if (action.kind !== "supply" && action.kind !== "withdraw" && action.kind !== "swap") {
     return c.json({ action: serializeAction(action), executed: false });
   }
 
@@ -147,16 +172,24 @@ app.post("/execute", async (c) => {
 
     let built: BuiltExecute;
     let token: Address;
+    let pullAmount: bigint;
     if (action.kind === "supply") {
       token = usdcAddress();
+      pullAmount = action.amount;
       built = buildRebalance({ kind: "supply", amount: action.amount, owner, network });
-    } else {
+    } else if (action.kind === "withdraw") {
       const aToken = await resolveAToken(network);
       token = aToken;
+      pullAmount = action.amount;
       built = buildRebalance({ kind: "withdraw", amount: action.amount, owner, network, aToken });
+    } else {
+      const s = await buildSwap({ fromSymbol: action.from, toSymbol: action.to, amount: action.amount, owner, network });
+      built = s;
+      token = s.pulls[0]!.token;
+      pullAmount = s.pulls[0]!.amount;
     }
 
-    const dryRun = await wouldAllowPull(executor, token, action.amount);
+    const dryRun = await wouldAllowPull(executor, token, pullAmount);
     if (!dryRun.ok) return c.json({ action: serializeAction(action), executed: false, dryRun });
 
     const version = await readVersion(executor);
@@ -181,6 +214,7 @@ function usdcAddress(): Address {
 function serializeAction(a: ProposedAction) {
   if (a.kind === "noop") return { kind: a.kind, reason: a.reason };
   if (a.kind === "answer") return { kind: a.kind, text: a.text };
+  if (a.kind === "swap") return { kind: a.kind, from: a.from, to: a.to, amount: a.amount };
   return { kind: a.kind, amount: a.amount.toString() };
 }
 
