@@ -62,11 +62,15 @@ export const DEPLOYMENTS: Record<
 > = {
   // Deployed to Celo mainnet 2026-07-28 (verified on Celoscan). Fully upgradeable stack:
   // factory = UUPS proxy, beacon = UUPS proxy, executor = beacon proxy (all AccessControl).
-  // `implementation` upgraded in place to the sweepTokens + Multicall logic (beacon.upgradeTo).
+  // Upgraded in place 2026-07-28 to the CENTRAL-AGENT design (agent set once on the factory,
+  // read live by every executor via factory.agent()) + approvals[i].token hardening — the
+  // factory proxy & beacon proxy addresses are unchanged; only the impls behind them changed
+  // (executor impl 0x1c3caFaFC49006343C61c792e0119522e94Ec99F, factory impl 0x36441545488667B8aF8f01f35fdAbC76e995E20D).
+  // Central agent set to 0x08633C082736dE642C1A787FF7B07a2AA415A1D7. (Prior executor impl 0x0eAd…6693.)
   [CHAINS.celo.id]: {
     factory: "0x1CB84F7597A97A6c6BEE5CcE3AF4E1fBF02E0981",
     beacon: "0x409240F0e64907f4644106914d6aFf78E97DE7aA",
-    implementation: "0x0eAd5cdBcFe85a02Ec9EEd93317A2F123AC36693",
+    implementation: "0x1c3caFaFC49006343C61c792e0119522e94Ec99F",
   },
   [CHAINS.celo_sepolia.id]: {},
 };
