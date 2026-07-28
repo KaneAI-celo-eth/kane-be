@@ -57,11 +57,12 @@ export const DEPLOYMENTS: Record<
   number,
   { factory?: Address; beacon?: Address; implementation?: Address }
 > = {
-  // Deployed to Celo mainnet 2026-07-28 (verified on Celoscan).
+  // Deployed to Celo mainnet 2026-07-28 (verified on Celoscan). Fully upgradeable stack:
+  // factory = UUPS proxy, beacon = UUPS proxy, executor = beacon proxy (all AccessControl).
   [CHAINS.celo.id]: {
-    factory: "0xB746Bf016Ac4E57c71E6736e1a4082b5baEeb791",
-    beacon: "0xeDBa8B7E2B5eE44E39946914d16c5B54FAcB1752",
-    implementation: "0xCbC3A95380cAAa99d18B9bFf1E189c0aB267cc0C",
+    factory: "0x1CB84F7597A97A6c6BEE5CcE3AF4E1fBF02E0981",
+    beacon: "0x409240F0e64907f4644106914d6aFf78E97DE7aA",
+    implementation: "0xfbbf4293A43678Bb2D2Ac0462A2c53E9425605e7",
   },
   [CHAINS.celo_sepolia.id]: {},
 };
