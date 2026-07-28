@@ -126,6 +126,31 @@ export async function resolveAToken(network: Network): Promise<Address> {
   return aToken;
 }
 
+const RAY = 10n ** 27n;
+
+/**
+ * Live Aave V3 USDC supply APR (%, per year) from the ProtocolDataProvider's `liquidityRate`
+ * (a ray). Returns null if Aave isn't configured or the read fails — the agent then answers
+ * without a number rather than inventing one.
+ */
+export async function readSupplyApr(network: Network): Promise<number | null> {
+  const aave = AAVE[network];
+  const usdc = TOKENS[network]?.USDC;
+  if (!aave || !usdc) return null;
+  try {
+    const data = await publicClient.readContract({
+      address: aave.dataProvider,
+      abi: aaveDataProviderAbi,
+      functionName: "getReserveData",
+      args: [usdc.address],
+    });
+    const liquidityRate = data[5]; // ray APR (1e27)
+    return Number((liquidityRate * 10000n) / RAY) / 100; // % with 2 decimals
+  } catch {
+    return null;
+  }
+}
+
 // ---- pure builder ----------------------------------------------------------
 
 /**

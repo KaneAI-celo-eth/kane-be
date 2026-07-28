@@ -70,7 +70,9 @@ export const aavePoolAbi = parseAbi([
   "function withdraw(address asset, uint256 amount, address to) returns (uint256)",
 ]);
 
-// Aave V3 ProtocolDataProvider — resolves the aToken (aUSDC) for the withdraw pull.
+// Aave V3 ProtocolDataProvider — resolves the aToken (aUSDC) for the withdraw pull, and reads
+// the live reserve data (we use `liquidityRate` = supply APR, in ray, for real-time answers).
 export const aaveDataProviderAbi = parseAbi([
   "function getReserveTokensAddresses(address asset) view returns (address aTokenAddress, address stableDebtTokenAddress, address variableDebtTokenAddress)",
+  "function getReserveData(address asset) view returns (uint256 unbacked, uint256 accruedToTreasuryScaled, uint256 totalAToken, uint256 totalStableDebt, uint256 totalVariableDebt, uint256 liquidityRate, uint256 variableBorrowRate, uint256 stableBorrowRate, uint256 averageStableBorrowRate, uint256 liquidityIndex, uint256 variableBorrowIndex, uint40 lastUpdateTimestamp)",
 ]);

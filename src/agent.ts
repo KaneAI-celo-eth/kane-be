@@ -26,21 +26,25 @@ Choose exactly ONE shape:
   {"kind":"noop","reason":"<why nothing can be done>"}
 
 How to choose:
-- If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare, "explain") → return "answer". Give a concise, factual reply grounded in the Celo facts provided. If a specific number (APY, price) is not in the facts, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
+- If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare", "explain") → return "answer". Give a concise, factual reply grounded in the Celo facts provided. When a "LIVE DATA" block is present, quote those exact numbers (e.g. the current Aave USDC supply APR). If a specific number is NOT given, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
 - If the user gives a COMMAND to move funds ("put / move / deposit / withdraw N USDC") → return "supply" or "withdraw". amount = USDC BASE UNITS (6 decimals, so 1 USDC = "1000000"), a positive integer.
 - Only "supply"/"withdraw" execute on-chain right now (USDC on Aave V3). Swaps and other venues are NOT executable yet — if the user asks to swap or trade, return "answer" that explains this and offers the supported action.
 - NEVER output an address or any 0x / "to" / "asset" / "pool" field — the runtime resolves ALL addresses and binds recipients to the owner.
 - Keep "text" under ~60 words. Output JSON only.`;
 
-/** The full system prompt for `network` — instructions + the Celopedia-grounded facts slice. */
-export function buildSystemPrompt(network: Network): string {
-  return `${INSTRUCTIONS}\n\n${celoFactsPrompt(network)}`;
+/** The full system prompt — instructions + the Celopedia facts slice + optional live data. */
+export function buildSystemPrompt(network: Network, liveFacts?: string): string {
+  const live = liveFacts
+    ? `\n\nLIVE DATA (real-time, on-chain — quote these exact numbers, do not invent others):\n${liveFacts}`
+    : "";
+  return `${INSTRUCTIONS}\n\n${celoFactsPrompt(network)}${live}`;
 }
 
 /** Answer or propose for a user message. Returns noop on any failure — the chain decides. */
 export async function propose(
   intent: string,
   network: Network = config.network,
+  liveFacts?: string,
 ): Promise<ProposedAction> {
   if (!config.llm.apiKey) {
     return noop("AI_AUTH_TOKEN not set — assistant disabled");
@@ -49,7 +53,7 @@ export async function propose(
   let raw: string;
   try {
     raw = await chat([
-      { role: "system", content: buildSystemPrompt(network) },
+      { role: "system", content: buildSystemPrompt(network, liveFacts) },
       { role: "user", content: intent },
     ]);
   } catch (e) {
