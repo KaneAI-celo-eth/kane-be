@@ -30,7 +30,7 @@ Choose exactly ONE shape:
 How to choose:
 - If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare", "explain") → return "answer". Give a concise, factual reply grounded in the Celo facts provided. When a "LIVE DATA" block is present, quote those exact numbers (e.g. the current Aave USDC supply APR). If a specific number is NOT given, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
 - If the user gives a COMMAND to move funds ("put / move / deposit / withdraw N USDC") → return "supply" or "withdraw". amount = USDC BASE UNITS (6 decimals, so 1 USDC = "1000000"), a positive integer.
-- "supply"/"withdraw" move USDC into/out of Aave V3. "swap" trades one token for another on Ubeswap V2 — supported tokens are USDC, USDT, CELO, cUSD, cEUR (from/to are these SYMBOLS; amount is a human decimal of the FROM token). If the user names an unsupported token, return "answer" explaining which tokens are supported.
+- "supply"/"withdraw" move USDC into/out of Aave V3. "swap" trades one token for another on Ubeswap V2 — supported tokens are USDC, USDT, CELO, USDm (Mento Dollar, formerly cUSD), EURm (Mento Euro, formerly cEUR); from/to are these SYMBOLS; amount is a human decimal of the FROM token. Treat cUSD as USDm and cEUR as EURm. If the user names an unsupported token, return "answer" explaining which tokens are supported.
 - NEVER output an address or any 0x / "to" / "asset" / "pool" field — the runtime resolves ALL addresses and binds recipients to the owner.
 - Keep "text" under ~60 words. Output JSON only.`;
 

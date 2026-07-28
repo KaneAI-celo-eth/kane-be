@@ -41,8 +41,9 @@ export const TOKENS: Record<Network, Record<string, TokenInfo>> = {
   celo: {
     USDC: { address: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", decimals: 6 },
     USDT: { address: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e", decimals: 6 },
-    cUSD: { address: "0x765DE816845861e75A25fCA122bb6898B8B1282a", decimals: 18 },
-    cEUR: { address: "0xD8763CBa276a3738E6DE85b4b3bF5FDed6D6cA73", decimals: 18 },
+    // Mento stablecoins — rebranded cUSD→USDm, cEUR→EURm (SAME addresses; per Celopedia).
+    USDm: { address: "0x765DE816845861e75A25fCA122bb6898B8B1282a", decimals: 18 },
+    EURm: { address: "0xD8763CBa276a3738E6DE85b4b3bF5FDed6D6cA73", decimals: 18 },
     CELO: { address: "0x471EcE3750Da237f93B8E339c536989b8978a438", decimals: 18 },
   },
   celo_sepolia: {

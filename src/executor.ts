@@ -221,13 +221,17 @@ export interface SwapQuote {
   amountOutHuman: string;
 }
 
-/** Resolve a token symbol (case-insensitive) to its on-chain address + decimals. */
-export function resolveToken(network: Network, symbol: string): { address: Address; decimals: number } {
+/** Resolve a token symbol (case-insensitive) to its address, decimals + CANONICAL symbol (the
+ *  registry key — e.g. "USDm", never "USDM" which is a different token). */
+export function resolveToken(
+  network: Network,
+  symbol: string,
+): { address: Address; decimals: number; symbol: string } {
   const tokens = TOKENS[network] ?? {};
   const key = Object.keys(tokens).find((k) => k.toLowerCase() === symbol.toLowerCase());
   const t = key ? tokens[key] : undefined;
-  if (!t) throw new Error(`token ${symbol} not supported on ${network}`);
-  return t;
+  if (!t || !key) throw new Error(`token ${symbol} not supported on ${network}`);
+  return { ...t, symbol: key };
 }
 
 /** Read the input-token reserve of a Ubeswap pair for the pool-depth guard. */
@@ -318,8 +322,8 @@ export async function quoteSwap(
   const amountOutMin = (amountOut * (10000n - SWAP_SLIPPAGE_BPS)) / 10000n;
 
   return {
-    fromSymbol: fromSymbol.toUpperCase(),
-    toSymbol: toSymbol.toUpperCase(),
+    fromSymbol: from.symbol, // canonical (e.g. "USDm")
+    toSymbol: to.symbol,
     path,
     amountIn,
     amountOut,
