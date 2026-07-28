@@ -8,7 +8,7 @@
 import { config, type Network } from "./config";
 import { celoFactsPrompt } from "./celo-facts";
 import { retrieveCelopedia } from "./celopedia";
-import { chat } from "./llm";
+import { chat, type ChatMessage } from "./llm";
 
 export type ProposedAction =
   | { kind: "answer"; text: string }
@@ -49,11 +49,13 @@ export function buildSystemPrompt(network: Network, liveFacts?: string, celopedi
   return `${INSTRUCTIONS}\n\n${celoFactsPrompt(network)}${kb}${live}`;
 }
 
-/** Answer or propose for a user message. Returns noop on any failure — the chain decides. */
+/** Answer or propose for a user message. Returns noop on any failure — the chain decides.
+ *  `history` is the prior conversation (for a multi-turn chat) — capped by the caller. */
 export async function propose(
   intent: string,
   network: Network = config.network,
   liveFacts?: string,
+  history: ChatMessage[] = [],
 ): Promise<ProposedAction> {
   if (!config.llm.apiKey) {
     return noop("AI_AUTH_TOKEN not set — assistant disabled");
@@ -66,6 +68,7 @@ export async function propose(
   try {
     raw = await chat([
       { role: "system", content: buildSystemPrompt(network, liveFacts, knowledge) },
+      ...history.filter((m) => m.role !== "system").slice(-8),
       { role: "user", content: intent },
     ]);
   } catch (e) {

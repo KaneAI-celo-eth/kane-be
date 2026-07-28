@@ -104,14 +104,18 @@ app.post("/dry-run", async (c) => {
 // Propose an action from natural language, then dry-run it against the on-chain gate.
 // Does NOT execute — execution stays a separate, explicit step (/execute).
 app.post("/intent", async (c) => {
-  const body = await c.req.json<{ intent?: string; owner?: string }>();
+  const body = await c.req.json<{
+    intent?: string;
+    owner?: string;
+    history?: { role: "user" | "assistant"; content: string }[];
+  }>();
   if (!body?.intent) return c.json({ error: "intent required" }, 400);
 
   // Real-time facts for grounded answers (e.g. the live Aave USDC supply APR).
   const apr = await readSupplyApr(config.network);
   const liveFacts = apr !== null ? `Aave V3 USDC supply APR right now: ${apr}% per year.` : undefined;
 
-  const action = await propose(body.intent, config.network, liveFacts);
+  const action = await propose(body.intent, config.network, liveFacts, body.history ?? []);
   const res: Record<string, unknown> = { action: serializeAction(action) };
 
   // Supply/withdraw dry-run against the gate; answers/noops don't touch the chain.
