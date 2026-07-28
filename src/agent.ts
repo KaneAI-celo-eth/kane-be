@@ -7,6 +7,7 @@
 
 import { config, type Network } from "./config";
 import { celoFactsPrompt } from "./celo-facts";
+import { retrieveCelopedia } from "./celopedia";
 import { chat } from "./llm";
 
 export type ProposedAction =
@@ -34,12 +35,18 @@ How to choose:
 - NEVER output an address or any 0x / "to" / "asset" / "pool" field — the runtime resolves ALL addresses and binds recipients to the owner.
 - Keep "text" under ~60 words. Output JSON only.`;
 
-/** The full system prompt — instructions + the Celopedia facts slice + optional live data. */
-export function buildSystemPrompt(network: Network, liveFacts?: string): string {
+/**
+ * The full system prompt: instructions + verified core facts + a retrieved slice of Celopedia
+ * knowledge relevant to the question + optional live data. `celopedia` is the retrieved context.
+ */
+export function buildSystemPrompt(network: Network, liveFacts?: string, celopedia?: string): string {
+  const kb = celopedia
+    ? `\n\nCELOPEDIA KNOWLEDGE (authoritative reference for this question — ground your answer in these facts; do not invent beyond them):\n${celopedia}`
+    : "";
   const live = liveFacts
     ? `\n\nLIVE DATA (real-time, on-chain — quote these exact numbers, do not invent others):\n${liveFacts}`
     : "";
-  return `${INSTRUCTIONS}\n\n${celoFactsPrompt(network)}${live}`;
+  return `${INSTRUCTIONS}\n\n${celoFactsPrompt(network)}${kb}${live}`;
 }
 
 /** Answer or propose for a user message. Returns noop on any failure — the chain decides. */
@@ -52,10 +59,13 @@ export async function propose(
     return noop("AI_AUTH_TOKEN not set — assistant disabled");
   }
 
+  // Ground the answer in the most relevant Celopedia section(s) for this question.
+  const knowledge = retrieveCelopedia(intent);
+
   let raw: string;
   try {
     raw = await chat([
-      { role: "system", content: buildSystemPrompt(network, liveFacts) },
+      { role: "system", content: buildSystemPrompt(network, liveFacts, knowledge) },
       { role: "user", content: intent },
     ]);
   } catch (e) {
