@@ -161,12 +161,26 @@ app.post("/intent", async (c) => {
 app.post("/execute", async (c) => {
   if (!agentAddress()) return c.json({ error: "agent key not configured (AGENT_PRIVATE_KEY)" }, 403);
 
-  const body = await c.req.json<{ intent?: string; owner?: string }>();
-  if (!body?.intent) return c.json({ error: "intent required" }, 400);
+  const body = await c.req.json<{
+    intent?: string;
+    owner?: string;
+    action?: { kind?: string; amount?: string; from?: string; to?: string };
+  }>();
   if (!body?.owner || !isAddress(body.owner)) return c.json({ error: "invalid or missing owner" }, 400);
   const owner = body.owner as Address;
 
-  const action = await propose(body.intent);
+  // Prefer an explicit action (execute EXACTLY what the console proposed — deterministic, no
+  // re-propose); fall back to proposing from `intent`. Either way it is dry-run before sending.
+  let action: ProposedAction;
+  if (body.action?.kind) {
+    const a = deserializeAction(body.action);
+    if (!a) return c.json({ error: "invalid action" }, 400);
+    action = a;
+  } else if (body.intent) {
+    action = await propose(body.intent);
+  } else {
+    return c.json({ error: "intent or action required" }, 400);
+  }
   // Only fund-moving actions execute; answers and noops never touch the chain.
   if (action.kind !== "supply" && action.kind !== "withdraw" && action.kind !== "swap") {
     return c.json({ action: serializeAction(action), executed: false });
@@ -222,6 +236,27 @@ function serializeAction(a: ProposedAction) {
   if (a.kind === "answer") return { kind: a.kind, text: a.text };
   if (a.kind === "swap") return { kind: a.kind, from: a.from, to: a.to, amount: a.amount };
   return { kind: a.kind, amount: a.amount.toString() };
+}
+
+/** Wire → ProposedAction for the console's Execute button. Only fund-moving kinds are executable;
+ *  anything else (or malformed) returns null so the caller rejects it. The action is still dry-run
+ *  against the on-chain gate before sending — the chain decides. */
+function deserializeAction(a: { kind?: string; amount?: string; from?: string; to?: string }): ProposedAction | null {
+  if (a.kind === "supply" || a.kind === "withdraw") {
+    if (!a.amount) return null;
+    try {
+      const amount = BigInt(a.amount);
+      if (amount <= 0n) return null;
+      return { kind: a.kind, amount };
+    } catch {
+      return null;
+    }
+  }
+  if (a.kind === "swap") {
+    if (!a.from || !a.to || !a.amount || !(Number(a.amount) > 0)) return null;
+    return { kind: "swap", from: a.from, to: a.to, amount: a.amount };
+  }
+  return null;
 }
 
 export default { port: config.port, fetch: app.fetch };
