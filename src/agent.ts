@@ -1,47 +1,49 @@
-// The advisor. Turns a natural-language intent into a *proposed* executor action via an
-// OpenAI-compatible LLM (default: Claude Haiku on dgrid.ai). The model is grounded on a
-// curated Celopedia facts slice (decision 0004 / KANE-26) and returns ONLY an action +
-// amount — it NEVER emits an address; the runtime resolves every address. The proposal is
-// never trusted directly: it is dry-run against the on-chain policy (executor.wouldAllowPull)
-// and only then executed. "The model advises; the chain decides."
+// The assistant. Turns a natural-language message into either a spoken *answer* (for
+// questions / advice) or a *proposed* executor action (for commands), via an OpenAI-compatible
+// LLM (default: Claude Haiku on dgrid.ai), grounded on a curated Celopedia facts slice
+// (decision 0004 / KANE-26). It NEVER emits an address; the runtime resolves every address. A
+// proposed action is never trusted directly — it is dry-run against the on-chain policy
+// (executor.wouldAllowPull) and only then executed. "The model advises; the chain decides."
 
 import { config, type Network } from "./config";
 import { celoFactsPrompt } from "./celo-facts";
 import { chat } from "./llm";
 
 export type ProposedAction =
+  | { kind: "answer"; text: string }
   | { kind: "supply"; amount: bigint }
   | { kind: "withdraw"; amount: bigint }
   | { kind: "noop"; reason: string };
 
 const noop = (reason: string): ProposedAction => ({ kind: "noop", reason });
 
-const INSTRUCTIONS = `You are KaneAI's planner on Celo. Convert the user's intent into exactly ONE action, as strict JSON — no prose, no markdown, no code fences.
+const INSTRUCTIONS = `You are KaneAI's assistant on Celo. Your job is to help a regular person do things on Celo from one chat — without opening a dozen dApps. Reply with STRICT JSON only — no prose outside the JSON, no markdown, no code fences.
 
-Choose one shape:
+Choose exactly ONE shape:
+  {"kind":"answer","text":"<a short, helpful reply grounded ONLY in the Celo facts below>"}
   {"kind":"supply","amount":"<integer string, USDC base units>"}
   {"kind":"withdraw","amount":"<integer string, USDC base units>"}
-  {"kind":"noop","reason":"<why no safe action>"}
+  {"kind":"noop","reason":"<why nothing can be done>"}
 
-Rules:
-- "supply" deposits USDC into Aave V3; "withdraw" redeems USDC from Aave V3.
-- amount is USDC BASE UNITS as a decimal integer string (6 decimals, so 1 USDC = "1000000"). It must be a positive integer.
-- NEVER output an address. Do NOT include "to", "onBehalfOf", "asset", "token", "pool", or any 0x field — the runtime resolves ALL addresses, and recipients are always bound to the vault owner.
-- If the intent is vague, unsafe, or names no amount, return noop.
-- Output JSON only.`;
+How to choose:
+- If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare, "explain") → return "answer". Give a concise, factual reply grounded in the Celo facts provided. If a specific number (APY, price) is not in the facts, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
+- If the user gives a COMMAND to move funds ("put / move / deposit / withdraw N USDC") → return "supply" or "withdraw". amount = USDC BASE UNITS (6 decimals, so 1 USDC = "1000000"), a positive integer.
+- Only "supply"/"withdraw" execute on-chain right now (USDC on Aave V3). Swaps and other venues are NOT executable yet — if the user asks to swap or trade, return "answer" that explains this and offers the supported action.
+- NEVER output an address or any 0x / "to" / "asset" / "pool" field — the runtime resolves ALL addresses and binds recipients to the owner.
+- Keep "text" under ~60 words. Output JSON only.`;
 
 /** The full system prompt for `network` — instructions + the Celopedia-grounded facts slice. */
 export function buildSystemPrompt(network: Network): string {
   return `${INSTRUCTIONS}\n\n${celoFactsPrompt(network)}`;
 }
 
-/** Propose an action for a user intent. Returns noop on any failure — the chain decides. */
+/** Answer or propose for a user message. Returns noop on any failure — the chain decides. */
 export async function propose(
   intent: string,
   network: Network = config.network,
 ): Promise<ProposedAction> {
   if (!config.llm.apiKey) {
-    return noop("AI_AUTH_TOKEN not set — proposer disabled");
+    return noop("AI_AUTH_TOKEN not set — assistant disabled");
   }
 
   let raw: string;
@@ -58,8 +60,8 @@ export async function propose(
 }
 
 /**
- * Parse the LLM's JSON into a validated ProposedAction. The action shape carries NO address,
- * so any smuggled `to`/address field is structurally ignored. Invalid/malformed → noop.
+ * Parse the LLM's JSON into a validated ProposedAction. Action shapes carry NO address, so any
+ * smuggled `to`/address field is structurally ignored. Invalid/malformed → noop.
  */
 export function parseAction(raw: string): ProposedAction {
   const json = extractJson(raw);
@@ -70,6 +72,12 @@ export function parseAction(raw: string): ProposedAction {
     o = JSON.parse(json) as Record<string, unknown>;
   } catch {
     return noop("invalid JSON from LLM");
+  }
+
+  if (o.kind === "answer") {
+    const text = o.text;
+    if (typeof text !== "string" || text.trim() === "") return noop("empty answer from LLM");
+    return { kind: "answer", text: text.trim() };
   }
 
   if (o.kind === "supply" || o.kind === "withdraw") {

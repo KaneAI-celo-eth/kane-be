@@ -107,7 +107,8 @@ app.post("/intent", async (c) => {
   const action = await propose(body.intent);
   const res: Record<string, unknown> = { action: serializeAction(action) };
 
-  if (action.kind !== "noop" && body.owner && isAddress(body.owner)) {
+  // Only fund-moving actions dry-run against the gate; answers/noops don't touch the chain.
+  if ((action.kind === "supply" || action.kind === "withdraw") && body.owner && isAddress(body.owner)) {
     try {
       const executor = await resolveExecutor(body.owner as Address);
       const token = await pullToken(action.kind);
@@ -130,7 +131,10 @@ app.post("/execute", async (c) => {
   const owner = body.owner as Address;
 
   const action = await propose(body.intent);
-  if (action.kind === "noop") return c.json({ action: serializeAction(action), executed: false });
+  // Only supply/withdraw execute; answers and noops never touch the chain.
+  if (action.kind !== "supply" && action.kind !== "withdraw") {
+    return c.json({ action: serializeAction(action), executed: false });
+  }
 
   try {
     const executor = await resolveExecutor(owner);
@@ -171,6 +175,7 @@ function usdcAddress(): Address {
 
 function serializeAction(a: ProposedAction) {
   if (a.kind === "noop") return { kind: a.kind, reason: a.reason };
+  if (a.kind === "answer") return { kind: a.kind, text: a.text };
   return { kind: a.kind, amount: a.amount.toString() };
 }
 
