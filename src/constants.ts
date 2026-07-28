@@ -10,7 +10,7 @@ export type Network = "celo" | "celo_sepolia";
  * Drives BOTH the chain and the x402 network at once. Env `NETWORK` / `X402_NETWORK`
  * still override this per-run when set.
  */
-export const MAINNET = false;
+export const MAINNET = true;
 
 export const DEFAULT_NETWORK: Network = MAINNET ? "celo" : "celo_sepolia";
 export const DEFAULT_X402_NETWORK: "mainnet" | "testnet" = MAINNET ? "mainnet" : "testnet";
@@ -57,7 +57,12 @@ export const DEPLOYMENTS: Record<
   number,
   { factory?: Address; beacon?: Address; implementation?: Address }
 > = {
-  [CHAINS.celo.id]: {},
+  // Deployed to Celo mainnet 2026-07-28 (verified on Celoscan).
+  [CHAINS.celo.id]: {
+    factory: "0xB746Bf016Ac4E57c71E6736e1a4082b5baEeb791",
+    beacon: "0xeDBa8B7E2B5eE44E39946914d16c5B54FAcB1752",
+    implementation: "0xCbC3A95380cAAa99d18B9bFf1E189c0aB267cc0C",
+  },
   [CHAINS.celo_sepolia.id]: {},
 };
 
