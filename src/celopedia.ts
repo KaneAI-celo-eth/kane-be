@@ -9,37 +9,26 @@
 // Path resolves to the workspace skill by default; override with CELOPEDIA_PATH for a deployed
 // service that bundles a copy of the references.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const DEFAULT_PATH = resolve(import.meta.dir, "../../.agents/skills/celopedia-skill/references");
 const CELOPEDIA_PATH = process.env.CELOPEDIA_PATH ?? DEFAULT_PATH;
-
-// DeFi-agent-relevant references (skip growth/marketing/minipay files the agent doesn't need).
-const ALLOWLIST = [
-  "network-info.md",
-  "contracts.md",
-  "defi-protocols.md",
-  "ai-agents.md",
-  "ecosystem.md",
-  "attribution-tags.md",
-  "security-patterns.md",
-];
 
 type Section = { file: string; heading: string; text: string };
 const STOP = new Set(["the", "and", "for", "with", "you", "your", "what", "how", "can", "are", "this", "that", "celo", "onchain", "on-chain"]);
 
 let cache: Section[] | null = null;
 
-/** Load + section-split the allowlisted references (cached). Split on markdown headings. */
+/** Load + section-split ALL reference markdown files (cached). Split on markdown headings so
+ *  retrieval can surface the right topic (proof-of-ship, grants, governance, MiniPay, …). */
 function sections(): Section[] {
   if (cache) return cache;
   cache = [];
   if (!existsSync(CELOPEDIA_PATH)) return cache;
-  for (const file of ALLOWLIST) {
-    const p = join(CELOPEDIA_PATH, file);
-    if (!existsSync(p)) continue;
-    const text = readFileSync(p, "utf8");
+  const files = readdirSync(CELOPEDIA_PATH).filter((f) => f.endsWith(".md"));
+  for (const file of files) {
+    const text = readFileSync(join(CELOPEDIA_PATH, file), "utf8");
     for (const part of text.split(/\n(?=#{1,3} )/)) {
       const body = part.trim();
       if (body.length < 20) continue;
@@ -73,6 +62,7 @@ export function retrieveCelopedia(query: string, maxChars = 5000): string {
     .map((s) => {
       const lc = s.text.toLowerCase();
       const hl = s.heading.toLowerCase();
+      const fn = s.file.toLowerCase();
       let score = 0;
       for (const t of terms) {
         let i = lc.indexOf(t);
@@ -81,6 +71,7 @@ export function retrieveCelopedia(query: string, maxChars = 5000): string {
           i = lc.indexOf(t, i + t.length);
         }
         if (hl.includes(t)) score += 5; // heading match is a strong signal
+        if (fn.includes(t)) score += 8; // filename match is the strongest topic signal (e.g. proof-of-ship)
       }
       return { s, score };
     })
