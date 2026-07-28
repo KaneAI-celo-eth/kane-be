@@ -6,6 +6,7 @@
 // guarded /execute proposes → dry-runs → sends an attribution-tagged execute() as the agent.
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { type Address, isAddress } from "viem";
 import { ATTRIBUTION_TAG, config } from "./config";
 import { agentAddress, chain } from "./chain";
@@ -24,6 +25,16 @@ import { propose, type ProposedAction } from "./agent";
 import { buildPaymentMiddleware, PAID_ROUTE, x402Enabled } from "./x402/seller";
 
 const app = new Hono();
+
+// Allow the local console (Vite dev) to call the gateway from the browser.
+app.use(
+  "*",
+  cors({
+    origin: (origin) =>
+      origin && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ? origin : "http://localhost:5173",
+    allowMethods: ["GET", "POST", "OPTIONS"],
+  }),
+);
 
 app.get("/health", (c) =>
   c.json({
