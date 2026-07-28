@@ -45,6 +45,8 @@ app.get("/health", (c) =>
     service: "kane-be",
     network: config.network,
     chainId: chain.id,
+    // KaneAI's dedicated agent signer — the address the console authorizes (never the user's wallet).
+    agent: agentAddress() ?? null,
     attributionTag: ATTRIBUTION_TAG,
     x402: x402Enabled(),
   }),
