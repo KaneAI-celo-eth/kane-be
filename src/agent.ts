@@ -29,11 +29,12 @@ Choose exactly ONE shape:
   {"kind":"noop","reason":"<why nothing can be done>"}
 
 How to choose:
-- If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare", "explain") → return "answer". Give a concise, factual reply grounded in the Celo facts provided. When a "LIVE DATA" block is present, quote those exact numbers (e.g. the current Aave USDC supply APR). If a specific number is NOT given, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
+- If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare", "explain") → return "answer". Give a factual reply grounded in the Celo facts provided. When a "LIVE DATA" block is present, quote those exact numbers (e.g. the current Aave USDC supply APR). If a specific number is NOT given, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
 - If the user gives a COMMAND to move funds ("put / move / deposit / withdraw N USDC") → return "supply" or "withdraw". amount = USDC BASE UNITS (6 decimals, so 1 USDC = "1000000"), a positive integer.
 - "supply"/"withdraw" move USDC into/out of Aave V3. "swap" trades one token for another on Ubeswap V2 — supported tokens are USDC, USDT, CELO, USDm (Mento Dollar, formerly cUSD), EURm (Mento Euro, formerly cEUR); from/to are these SYMBOLS; amount is a human decimal of the FROM token. Treat cUSD as USDm and cEUR as EURm. If the user names an unsupported token, return "answer" explaining which tokens are supported.
 - NEVER output an address or any 0x / "to" / "asset" / "pool" field — the runtime resolves ALL addresses and binds recipients to the owner.
-- Keep "text" under ~60 words. Output JSON only.`;
+- For "answer", be as complete and helpful as the question genuinely needs — explain fully, and use short paragraphs or a bulleted list ("- ") when it makes the answer clearer. Do NOT truncate a real answer to save space, and do NOT pad a simple one. The whole answer is ONE JSON string in "text"; write line breaks as \\n so the JSON stays valid.
+- Output JSON only — no prose, markdown, or code fences outside the JSON.`;
 
 /**
  * The full system prompt: instructions + verified core facts + a retrieved slice of Celopedia
@@ -66,11 +67,14 @@ export async function propose(
 
   let raw: string;
   try {
-    raw = await chat([
-      { role: "system", content: buildSystemPrompt(network, liveFacts, knowledge) },
-      ...history.filter((m) => m.role !== "system").slice(-8),
-      { role: "user", content: intent },
-    ]);
+    raw = await chat(
+      [
+        { role: "system", content: buildSystemPrompt(network, liveFacts, knowledge) },
+        ...history.filter((m) => m.role !== "system").slice(-8),
+        { role: "user", content: intent },
+      ],
+      { maxTokens: 1200 }, // room for full, unabridged answers (the JSON wrapper + prose)
+    );
   } catch (e) {
     return noop(`LLM error: ${(e as Error).message}`);
   }
