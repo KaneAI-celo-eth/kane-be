@@ -14,6 +14,7 @@ import { AAVE, TOKENS, UBESWAP } from "./constants";
 import {
   aaveDataProviderAbi,
   aavePoolAbi,
+  erc20Abi,
   kaneExecutorAbi,
   kaneExecutorFactoryAbi,
   ubeswapFactoryAbi,
@@ -157,6 +158,32 @@ export async function readSupplyApr(network: Network): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+/** Read `owner`'s balance of every configured token (for grounding the assistant when the user
+ *  asks about their wallet). Returns human-readable amounts keyed by symbol. */
+export async function readBalances(
+  owner: Address,
+  network: Network,
+): Promise<{ symbol: string; human: string }[]> {
+  const toks = TOKENS[network] ?? {};
+  const entries = Object.entries(toks);
+  const results = await Promise.all(
+    entries.map(async ([symbol, t]) => {
+      try {
+        const bal = (await publicClient.readContract({
+          address: t.address,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [owner],
+        })) as bigint;
+        return { symbol, human: formatUnits(bal, t.decimals) };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter((r): r is { symbol: string; human: string } => r !== null);
 }
 
 // ---- pure builder ----------------------------------------------------------

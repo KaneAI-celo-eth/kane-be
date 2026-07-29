@@ -15,6 +15,7 @@ import {
   buildRebalance,
   buildSwap,
   quoteSwap,
+  readBalances,
   readSupplyApr,
   readTokenPolicy,
   readVersion,
@@ -115,9 +116,23 @@ app.post("/intent", async (c) => {
 
   // Real-time facts for grounded answers (e.g. the live Aave USDC supply APR).
   const apr = await readSupplyApr(config.network);
-  const liveFacts = apr !== null ? `Aave V3 USDC supply APR right now: ${apr}% per year.` : undefined;
+  let liveFacts = apr !== null ? `Aave V3 USDC supply APR right now: ${apr}% per year.` : "";
 
-  const action = await propose(body.intent, config.network, liveFacts, body.history ?? []);
+  // Ground balance questions in the CONNECTED wallet — the console already knows it, so the agent
+  // must never ask the user for an address.
+  if (body.owner && isAddress(body.owner)) {
+    try {
+      const bals = await readBalances(body.owner as Address, config.network);
+      if (bals.length) {
+        const line = bals.map((b) => `${b.symbol} ${b.human}`).join(", ");
+        liveFacts += `\nThe connected wallet is ${body.owner}. Its CURRENT token balances: ${line}. When the user asks to check their balance / how much they have, answer directly with these exact numbers — do NOT ask them for an address.`;
+      }
+    } catch {
+      /* balance read failed — fall back to APR-only facts */
+    }
+  }
+
+  const action = await propose(body.intent, config.network, liveFacts || undefined, body.history ?? []);
   const res: Record<string, unknown> = { action: serializeAction(action) };
 
   // Supply/withdraw dry-run against the gate; answers/noops don't touch the chain.
