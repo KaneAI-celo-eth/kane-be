@@ -242,6 +242,68 @@ app.post("/execute", async (c) => {
   }
 });
 
+// Build the execute() payload for an action so the OWNER can sign it themselves (manual actions are
+// owner-signed; the agent path is for the scheduler). Returns the pulls/approvals/calls + the input
+// token/amount to approve + the executor's current version — everything the console needs to send
+// approve(inputToken, inputAmount) then execute(...) from the user's wallet. Does NOT send anything.
+app.post("/build", async (c) => {
+  const body = await c.req.json<{
+    owner?: string;
+    action?: { kind?: string; amount?: string; from?: string; to?: string };
+  }>();
+  if (!body?.owner || !isAddress(body.owner)) return c.json({ error: "invalid or missing owner" }, 400);
+  const action = body.action?.kind ? deserializeAction(body.action) : null;
+  if (!action) return c.json({ error: "invalid action" }, 400);
+  const owner = body.owner as Address;
+  const network = config.network;
+
+  try {
+    const executor = await resolveExecutor(owner);
+    let built: BuiltExecute;
+    let inputToken: Address;
+    let inputAmount: bigint;
+    let quote: Awaited<ReturnType<typeof buildSwap>>["quote"] | undefined;
+
+    if (action.kind === "supply") {
+      built = buildRebalance({ kind: "supply", amount: action.amount, owner, network });
+      inputToken = usdcAddress();
+      inputAmount = action.amount;
+    } else if (action.kind === "withdraw") {
+      const aToken = await resolveAToken(network);
+      built = buildRebalance({ kind: "withdraw", amount: action.amount, owner, network, aToken });
+      inputToken = aToken;
+      inputAmount = action.amount;
+    } else if (action.kind === "swap") {
+      const s = await buildSwap({ fromSymbol: action.from, toSymbol: action.to, amount: action.amount, owner, network });
+      built = s;
+      quote = s.quote;
+      inputToken = s.pulls[0]!.token;
+      inputAmount = s.pulls[0]!.amount;
+    } else {
+      return c.json({ error: "action is not executable" }, 400);
+    }
+
+    const version = await readVersion(executor);
+    const dryRun = await wouldAllowPull(executor, inputToken, inputAmount);
+    return c.json({
+      executor,
+      version,
+      inputToken,
+      inputAmount: inputAmount.toString(),
+      dryRun,
+      // execute() args, JSON-safe (bigints → strings). The console casts back to bigint to sign.
+      pulls: built.pulls.map((p) => ({ token: p.token, amount: p.amount.toString() })),
+      approvals: built.approvals.map((a) => ({ token: a.token, spender: a.spender, amount: a.amount.toString() })),
+      calls: built.calls.map((cl) => ({ target: cl.target, value: cl.value.toString(), data: cl.data })),
+      ...(quote
+        ? { quote: { from: quote.fromSymbol, to: quote.toSymbol, amountOutHuman: quote.amountOutHuman, hops: quote.path.length - 1 } }
+        : {}),
+    });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
 /** The token pulled for a given action kind: USDC for supply, aUSDC for withdraw. */
 async function pullToken(kind: "supply" | "withdraw"): Promise<Address> {
   return kind === "supply" ? usdcAddress() : resolveAToken(config.network);
