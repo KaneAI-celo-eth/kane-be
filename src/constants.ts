@@ -104,6 +104,9 @@ export const UBESWAP: Partial<Record<Network, { router: Address; factory: Addres
 };
 
 /** ERC-8004 Identity Registry per network. */
+/** KaneAI's registered ERC-8004 agentId (mainnet, owner = agent wallet 0x0863…A1D7). */
+export const ERC8004_AGENT_ID = 9749n;
+
 export const ERC8004_IDENTITY: Record<Network, Address> = {
   celo: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
   celo_sepolia: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
