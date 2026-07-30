@@ -26,17 +26,29 @@ import {
   type BuiltExecute,
 } from "./executor";
 import { propose, type ProposedAction } from "./agent";
-import { buildPaymentMiddleware, PAID_ROUTE, x402Enabled } from "./x402/seller";
+import { buildPaymentMiddleware, x402Enabled } from "./x402/seller";
 
 const app = new Hono();
 
 // Allow the local console (Vite dev) to call the gateway from the browser.
+// x402 request/response headers the browser buyer must be allowed to send + read cross-origin.
+const X402_REQ_HEADERS = ["Content-Type", "X-PAYMENT", "PAYMENT-SIGNATURE"];
+const X402_RES_HEADERS = [
+  "PAYMENT-REQUIRED",
+  "PAYMENT-RESPONSE",
+  "X-PAYMENT-RESPONSE",
+  "PAYMENT-VERIFIED",
+  "PAYMENT-ERROR",
+];
+
 app.use(
   "*",
   cors({
     origin: (origin) =>
       origin && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ? origin : "http://localhost:5173",
     allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: X402_REQ_HEADERS,
+    exposeHeaders: X402_RES_HEADERS, // so wrapFetchWithPayment can read the 402 requirements + settlement
   }),
 );
 
@@ -53,15 +65,10 @@ app.get("/health", (c) =>
   }),
 );
 
-// Seller flow (Track 2): mount the paid route only when configured (API key + payTo).
+// Seller flow (Track 2): when configured (API key + payTo), every `POST /intent` (one user prompt)
+// requires a 0.01 USDC payment. The /intent handler below runs only after payment settles.
 if (x402Enabled()) {
   app.use(buildPaymentMiddleware());
-  app.get(PAID_ROUTE, (c) =>
-    c.json({
-      advice: "KaneAI: define your paid product here.",
-      attributionTag: ATTRIBUTION_TAG,
-    }),
-  );
 }
 
 // Read the on-chain per-token policy: /policy?executor=0x..&token=0x..
