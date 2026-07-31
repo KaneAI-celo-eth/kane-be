@@ -4,7 +4,7 @@ The runtime behind KaneAI on **Celo**. It proposes actions from natural language
 **dry-runs them against the on-chain policy gate**, and executes only what the chain
 allows — every transaction carrying KaneAI's attribution tag.
 
-> **The model advises; the chain decides.**
+> **The model advises; your policy decides.**
 
 ## Modules
 

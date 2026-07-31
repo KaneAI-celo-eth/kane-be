@@ -3,7 +3,7 @@
 // LLM (default: Claude Haiku on dgrid.ai), grounded on a curated Celopedia facts slice
 // (decision 0004 / KANE-26). It NEVER emits an address; the runtime resolves every address. A
 // proposed action is never trusted directly — it is dry-run against the on-chain policy
-// (executor.wouldAllowPull) and only then executed. "The model advises; the chain decides."
+// (executor.wouldAllowPull) and only then executed. "The model advises; your policy decides."
 
 import { config, type Network } from "./config";
 import { celoFactsPrompt } from "./celo-facts";
@@ -50,7 +50,7 @@ export function buildSystemPrompt(network: Network, liveFacts?: string, celopedi
   return `${INSTRUCTIONS}\n\n${celoFactsPrompt(network)}${kb}${live}`;
 }
 
-/** Answer or propose for a user message. Returns noop on any failure — the chain decides.
+/** Answer or propose for a user message. Returns noop on any failure — your policy decides.
  *  `history` is the prior conversation (for a multi-turn chat) — capped by the caller. */
 export async function propose(
   intent: string,

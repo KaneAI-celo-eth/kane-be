@@ -41,11 +41,22 @@ const X402_RES_HEADERS = [
   "PAYMENT-ERROR",
 ];
 
+// Allowed browser origins: localhost (dev), any *.vercel.app (the deployed console + previews),
+// and anything in ALLOWED_ORIGINS (comma-separated, e.g. a custom domain). The production FE lives
+// on Vercel, so it must be permitted to call this gateway cross-origin.
+const EXTRA_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+function allowOrigin(origin: string | undefined): string {
+  if (!origin) return EXTRA_ORIGINS[0] ?? "http://localhost:5173";
+  if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return origin;
+  if (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/.test(origin)) return origin;
+  if (EXTRA_ORIGINS.includes(origin)) return origin;
+  return EXTRA_ORIGINS[0] ?? "http://localhost:5173";
+}
+
 app.use(
   "*",
   cors({
-    origin: (origin) =>
-      origin && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ? origin : "http://localhost:5173",
+    origin: (origin) => allowOrigin(origin ?? undefined),
     allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: X402_REQ_HEADERS,
     exposeHeaders: X402_RES_HEADERS, // so wrapFetchWithPayment can read the 402 requirements + settlement
@@ -324,7 +335,7 @@ function serializeAction(a: ProposedAction) {
 
 /** Wire → ProposedAction for the console's Execute button. Only fund-moving kinds are executable;
  *  anything else (or malformed) returns null so the caller rejects it. The action is still dry-run
- *  against the on-chain gate before sending — the chain decides. */
+ *  against the on-chain gate before sending — your policy decides. */
 function deserializeAction(a: { kind?: string; amount?: string; from?: string; to?: string }): ProposedAction | null {
   if (a.kind === "supply" || a.kind === "withdraw") {
     if (!a.amount) return null;

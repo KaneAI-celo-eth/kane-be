@@ -3,7 +3,7 @@
 // supply/withdraw rebalance as a pure execute() payload, and send it — attribution-tagged
 // and signed by the agent key. Replaces the removed custodial vault.ts.
 //
-// "The model advises; the chain decides." Every builder is pure and testable off-chain;
+// "The model advises; your policy decides." Every builder is pure and testable off-chain;
 // the recipient is ALWAYS the owner (never caller-supplied), matching the executor's
 // on-chain recipient binding (Aave supply.onBehalfOf / withdraw.to at word index 2).
 
