@@ -10,6 +10,7 @@
     "cli": "bun run src/cli.ts",
     "typecheck": "tsc --noEmit",
     "e2e:anvil": "bash scripts/e2e-anvil.sh",
+    "sync-celopedia": "bash scripts/sync-celopedia.sh",
     "deploy": "bash deploy.sh"
   },
   "dependencies": {

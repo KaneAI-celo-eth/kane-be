@@ -15,7 +15,7 @@ REMOTE="/home/celiqdev/apps/kane-be"
 HEALTH="https://kane-api.157.10.160.167.nip.io/health"  # the backend we just restarted
 
 cd "$(dirname "$0")"                                  # kane-be repo root
-REFS="../.agents/skills/celopedia-skill/references"  # Celopedia grounding (workspace skill)
+REFS="celopedia-refs"  # Celopedia grounding, bundled in-repo (re-vendor via `bun run sync-celopedia`)
 
 if [ -n "$(git status --porcelain 2>/dev/null || true)" ]; then
   echo "!  uncommitted changes present — deploying the working tree as-is."

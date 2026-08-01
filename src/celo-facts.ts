@@ -3,8 +3,8 @@
 // drift from what the code uses. Broad Celo knowledge (protocols, yields, ecosystem) is retrieved
 // separately from the live Celopedia references (see celopedia.ts). Decision 0004 / KANE-26.
 //
-// Keep constants.ts in sync with `.agents/skills/celopedia-skill/references/` (the CLAUDE.md
-// "always check Celopedia" rule + docs/architecture/celo-facts.md).
+// Keep constants.ts in sync with the bundled Celopedia refs (`celopedia-refs/`, re-vendored via
+// `bun run sync-celopedia`) — the CLAUDE.md "always check Celopedia" rule.
 
 import { AAVE, ATTRIBUTION_TAG, CHAINS, TOKENS, UBESWAP, type Network } from "./constants";
 

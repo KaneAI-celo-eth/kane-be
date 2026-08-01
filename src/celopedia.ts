@@ -6,13 +6,14 @@
 // still come from the verified registry (celo-facts.ts); this adds broad protocol / yield /
 // ecosystem knowledge so answers are grounded, current, and auto-synced with Celopedia.
 //
-// Path resolves to the workspace skill by default; override with CELOPEDIA_PATH for a deployed
-// service that bundles a copy of the references.
+// Grounding refs are bundled in the repo at kane-be/celopedia-refs (version-controlled, so the repo
+// is self-contained and deploys deterministically). Re-vendor from the upstream celopedia-skill with
+// `bun run sync-celopedia`. CELOPEDIA_PATH overrides the location if ever needed.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const DEFAULT_PATH = resolve(import.meta.dir, "../../.agents/skills/celopedia-skill/references");
+const DEFAULT_PATH = resolve(import.meta.dir, "../celopedia-refs");
 const CELOPEDIA_PATH = process.env.CELOPEDIA_PATH ?? DEFAULT_PATH;
 
 type Section = { file: string; heading: string; text: string };
