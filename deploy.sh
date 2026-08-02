@@ -36,7 +36,9 @@ else
 fi
 
 echo "-> bun install (idempotent; picks up new/changed deps)"
-ssh "$VPS" "cd '$REMOTE' && bun install >/dev/null 2>&1 && echo '   deps ok'"
+# bun isn't on the non-interactive SSH PATH on the VPS (pm2 launches it by absolute
+# path), so call the binary directly.
+ssh "$VPS" "cd '$REMOTE' && ~/.bun/bin/bun install >/dev/null 2>&1 && echo '   deps ok'"
 
 echo "-> pm2 restart"
 ssh "$VPS" 'pm2 restart kane-be --update-env >/dev/null 2>&1 && echo "   online"'
