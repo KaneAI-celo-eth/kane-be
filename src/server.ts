@@ -26,7 +26,7 @@ import {
   type BuiltExecute,
 } from "./executor";
 import { propose, type ProposedAction } from "./agent";
-import { buildPaymentMiddleware, facilitatorReachable, x402Enabled } from "./x402/seller";
+import { buildPaymentMiddleware, facilitatorReachable, PAID_ROUTE, x402Enabled } from "./x402/seller";
 
 // Backstop: a flaky x402 facilitator (or any late async error) must never take the agent down.
 // Log unhandled rejections and keep serving /intent, /build, /health instead of crash-looping.
@@ -82,16 +82,23 @@ app.get("/health", (c) =>
   }),
 );
 
-// Seller flow (Track 2): every `POST /intent` (one user prompt) requires a 0.01 USDC payment —
-// BUT only enable the paywall if the facilitator is reachable. On a facilitator outage we serve
-// prompts FREE this boot (the paywall resumes on the next restart once it's back) rather than
-// crash-looping the whole agent. The /intent handler below runs after payment settles when on.
+// Seller flow (Track 2): every `POST /intent` (one user prompt) requires a 0.01 USDC payment.
+// We enable the paywall only if the facilitator is reachable — but a facilitator outage must
+// neither crash the agent NOR give the paid product away for free. So on an outage we FAIL CLOSED:
+// /intent returns 503 while the free routes (/health, /build, /policy, /dry-run) stay up. The
+// paywall re-enables on the next restart once the facilitator recovers.
 if (x402Enabled()) {
   if (await facilitatorReachable()) {
     app.use(buildPaymentMiddleware());
     console.log("[x402] facilitator reachable — paywall enabled on POST /intent");
   } else {
-    console.warn("[x402] facilitator unreachable at boot — serving /intent FREE (paywall off this boot)");
+    app.use(PAID_ROUTE, async (c) =>
+      c.json(
+        { error: "Payment temporarily unavailable — the x402 facilitator is unreachable. Please try again shortly." },
+        503,
+      ),
+    );
+    console.warn(`[x402] facilitator unreachable at boot — ${PAID_ROUTE} returns 503 (fail-closed); other routes up`);
   }
 }
 
