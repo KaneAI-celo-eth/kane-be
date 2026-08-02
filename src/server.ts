@@ -172,16 +172,17 @@ app.post("/intent", async (c) => {
       res.quote = {
         from: q.fromSymbol,
         to: q.toSymbol,
+        venue: q.venue,
         amountIn: q.amountIn.toString(),
         amountOut: q.amountOut.toString(),
         amountOutHuman: q.amountOutHuman,
         amountOutMin: q.amountOutMin.toString(),
-        hops: q.path.length - 1,
+        hops: q.path ? q.path.length - 1 : 1,
       };
       if (body.owner && isAddress(body.owner)) {
         const executor = await resolveExecutor(body.owner as Address);
         res.executor = executor;
-        res.dryRun = await wouldAllowPull(executor, q.path[0]!, q.amountIn);
+        res.dryRun = await wouldAllowPull(executor, q.fromAddress, q.amountIn);
       }
     } catch (e) {
       res.error = (e as Error).message; // unsupported token / no pool / pool-depth guard / unresolved executor
@@ -307,7 +308,7 @@ app.post("/build", async (c) => {
       approvals: built.approvals.map((a) => ({ token: a.token, spender: a.spender, amount: a.amount.toString() })),
       calls: built.calls.map((cl) => ({ target: cl.target, value: cl.value.toString(), data: cl.data })),
       ...(quote
-        ? { quote: { from: quote.fromSymbol, to: quote.toSymbol, amountOutHuman: quote.amountOutHuman, hops: quote.path.length - 1 } }
+        ? { quote: { from: quote.fromSymbol, to: quote.toSymbol, venue: quote.venue, amountOutHuman: quote.amountOutHuman, hops: quote.path ? quote.path.length - 1 : 1 } }
         : {}),
     });
   } catch (e) {

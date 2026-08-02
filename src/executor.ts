@@ -22,6 +22,7 @@ import {
   ubeswapRouterAbi,
 } from "./abi";
 import { tagCalldata } from "./attribution";
+import { quoteMento, mentoReason, buildMentoSwap } from "./mento";
 
 // ---- types -----------------------------------------------------------------
 
@@ -237,10 +238,17 @@ export function buildRebalance(params: RebalanceParams): BuiltExecute {
 const SWAP_SLIPPAGE_BPS = 100n; // 1% max slippage → amountOutMin
 const MAX_PRICE_IMPACT_BPS = 1000n; // guard: reject if amountIn > 10% of the input-token pool reserve
 
+export type SwapVenue = "ubeswap" | "mento";
+
 export interface SwapQuote {
+  /** Which venue won the best-output comparison. */
+  venue: SwapVenue;
   fromSymbol: string;
   toSymbol: string;
-  path: Address[];
+  fromAddress: Address;
+  toAddress: Address;
+  /** Ubeswap route (present only when `venue === "ubeswap"`). */
+  path?: Address[];
   amountIn: bigint;
   amountOut: bigint;
   amountOutMin: bigint;
@@ -280,32 +288,22 @@ async function inputReserve(factory: Address, tokenIn: Address, tokenOut: Addres
 }
 
 /**
- * Quote a swap on Ubeswap V2 (real on-chain `getAmountsOut`) with a **pool-depth guard**: Celo
- * pool depth varies wildly, and `amountOutMin` alone can't catch a shallow pool, so we reject
- * a swap whose input is a large fraction of the pair reserve (excessive price impact). Tries a
- * direct pair first, then routes via CELO. `amount` is a human decimal string of the from-token.
+ * Quote a Ubeswap V2 swap (real on-chain `getAmountsOut`) with a **pool-depth guard**: Celo
+ * pool depth varies wildly and `amountOutMin` alone can't catch a shallow pool, so we reject a
+ * swap whose input is an outsized fraction of the pair reserve. Tries a direct pair, then routes
+ * via CELO. Throws on no-pool / too-shallow / zero-output (the caller may still use Mento).
  */
-export async function quoteSwap(
-  fromSymbol: string,
-  toSymbol: string,
-  amount: string,
-  network: Network = config.network,
-): Promise<SwapQuote> {
+async function quoteUbeswap(
+  fromAddress: Address,
+  toAddress: Address,
+  amountIn: bigint,
+  network: Network,
+): Promise<{ path: Address[]; amountOut: bigint }> {
   const ube = UBESWAP[network];
   if (!ube) throw new Error(`Ubeswap not configured for network ${network}`);
-  const from = resolveToken(network, fromSymbol);
-  const to = resolveToken(network, toSymbol);
-  if (from.address.toLowerCase() === to.address.toLowerCase()) throw new Error("from and to are the same token");
-
-  const amountIn = parseUnits(amount, from.decimals);
-  if (amountIn <= 0n) throw new Error("amount must be positive");
-
-  // Candidate paths: direct first, then via CELO (weth). Pick the first path where EVERY hop is
-  // deep enough (the swap input at that hop isn't an outsized fraction of the pool reserve). A
-  // shallow FINAL hop is exactly the Celo failure mode that `amountOutMin` alone can't catch.
   const isWeth = (a: Address) => a.toLowerCase() === ube.weth.toLowerCase();
-  const candidates: Address[][] = [[from.address, to.address]];
-  if (!isWeth(from.address) && !isWeth(to.address)) candidates.push([from.address, ube.weth, to.address]);
+  const candidates: Address[][] = [[fromAddress, toAddress]];
+  if (!isWeth(fromAddress) && !isWeth(toAddress)) candidates.push([fromAddress, ube.weth, toAddress]);
 
   let path: Address[] | undefined;
   let amounts: readonly bigint[] | undefined;
@@ -338,19 +336,69 @@ export async function quoteSwap(
     }
   }
   if (!path || !amounts) {
-    throw new Error(
-      shallow
-        ? `swap too large for the available ${fromSymbol}→${toSymbol} pool depth on Ubeswap V2 — reduce the amount (or this pair's liquidity is on another venue)`
-        : `no Ubeswap V2 pool for ${fromSymbol}→${toSymbol}`,
-    );
+    throw new Error(shallow ? "swap too large for the available pool depth" : "no Ubeswap V2 pool");
   }
   const amountOut = amounts[amounts.length - 1];
   if (amountOut === undefined || amountOut <= 0n) throw new Error("zero output — no liquidity");
-  const amountOutMin = (amountOut * (10000n - SWAP_SLIPPAGE_BPS)) / 10000n;
+  return { path, amountOut };
+}
 
+/**
+ * Quote a swap across BOTH venues — Ubeswap V2 and Mento V3 — and return the best output. Many
+ * Mento local stables (NGNm, COPm, BRLm, …) have NO Ubeswap pool, so Mento is what makes them
+ * swappable; USD-pegged pairs may trade on either and win on price. `amount` is a human decimal
+ * of the from-token. Throws a combined reason only when NEITHER venue can serve the pair (this
+ * is where Mento's FX-hours / oracle-breaker reason surfaces to the user).
+ */
+export async function quoteSwap(
+  fromSymbol: string,
+  toSymbol: string,
+  amount: string,
+  network: Network = config.network,
+): Promise<SwapQuote> {
+  const from = resolveToken(network, fromSymbol);
+  const to = resolveToken(network, toSymbol);
+  if (from.address.toLowerCase() === to.address.toLowerCase()) throw new Error("from and to are the same token");
+  const amountIn = parseUnits(amount, from.decimals);
+  if (amountIn <= 0n) throw new Error("amount must be positive");
+
+  const reasons: string[] = [];
+  let ube: { path: Address[]; amountOut: bigint } | undefined;
+  try {
+    ube = await quoteUbeswap(from.address, to.address, amountIn, network);
+  } catch (e) {
+    reasons.push(`Ubeswap: ${(e as Error).message}`);
+  }
+  let mento: { amountOut: bigint } | undefined;
+  try {
+    const q = await quoteMento(from.address, to.address, amountIn, network);
+    mento = { amountOut: q.amountOut };
+  } catch (e) {
+    reasons.push(`Mento: ${mentoReason((e as Error).message)}`);
+  }
+
+  // Pick the venue with the larger output; single-venue resolves to whichever exists.
+  let venue: SwapVenue;
+  let amountOut: bigint;
+  let path: Address[] | undefined;
+  if (ube && (!mento || ube.amountOut >= mento.amountOut)) {
+    venue = "ubeswap";
+    amountOut = ube.amountOut;
+    path = ube.path;
+  } else if (mento) {
+    venue = "mento";
+    amountOut = mento.amountOut;
+  } else {
+    throw new Error(`no swap route for ${fromSymbol}→${toSymbol} — ${reasons.join("; ")}`);
+  }
+
+  const amountOutMin = (amountOut * (10000n - SWAP_SLIPPAGE_BPS)) / 10000n;
   return {
+    venue,
     fromSymbol: from.symbol, // canonical (e.g. "USDm")
     toSymbol: to.symbol,
+    fromAddress: from.address,
+    toAddress: to.address,
     path,
     amountIn,
     amountOut,
@@ -360,9 +408,11 @@ export async function quoteSwap(
 }
 
 /**
- * Build an `execute` payload for a Ubeswap V2 swap: pull the input from the owner, approve the
- * router, and call `swapExactTokensForTokens` with `to = owner` (recipient-bound at word 3) and
- * an `amountOutMin` from {@link quoteSwap}. Output goes straight to the owner (no sweepTokens).
+ * Build an `execute` payload for a swap on the best venue ({@link quoteSwap}). Ubeswap V2:
+ * `swapExactTokensForTokens` with `to = owner`. Mento V3: the SDK-built Router call, recipient
+ * bound to the owner. Either way the input is pulled from the owner, the venue is approved
+ * (bounded, reset in `execute`), and the output goes straight to the owner (recipient-bound at
+ * head word index 3 on both routers), so no `sweepTokens` are needed.
  */
 export async function buildSwap(params: {
   fromSymbol: string;
@@ -373,18 +423,36 @@ export async function buildSwap(params: {
   deadlineSeconds?: number;
 }): Promise<BuiltExecute & { quote: SwapQuote }> {
   const network = params.network ?? config.network;
-  const ube = UBESWAP[network];
-  if (!ube) throw new Error(`Ubeswap not configured for network ${network}`);
   const quote = await quoteSwap(params.fromSymbol, params.toSymbol, params.amount, network);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + (params.deadlineSeconds ?? 1200));
+  const tokenIn = quote.fromAddress;
 
+  if (quote.venue === "mento") {
+    const { router, data } = await buildMentoSwap({
+      fromAddress: quote.fromAddress,
+      toAddress: quote.toAddress,
+      amountIn: quote.amountIn,
+      owner: params.owner,
+      slippageBps: SWAP_SLIPPAGE_BPS,
+      deadlineSeconds: params.deadlineSeconds,
+      network,
+    });
+    return {
+      quote,
+      pulls: [{ token: tokenIn, amount: quote.amountIn }],
+      approvals: [{ token: tokenIn, spender: router, amount: quote.amountIn }],
+      calls: [{ target: router, value: 0n, data }],
+    };
+  }
+
+  // Ubeswap V2
+  const ube = UBESWAP[network];
+  if (!ube || !quote.path) throw new Error(`Ubeswap not configured for network ${network}`);
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + (params.deadlineSeconds ?? 1200));
   const data = encodeFunctionData({
     abi: ubeswapRouterAbi,
     functionName: "swapExactTokensForTokens",
     args: [quote.amountIn, quote.amountOutMin, quote.path, params.owner, deadline],
   });
-  const tokenIn = quote.path[0];
-  if (!tokenIn) throw new Error("empty swap path");
   return {
     quote,
     pulls: [{ token: tokenIn, amount: quote.amountIn }],

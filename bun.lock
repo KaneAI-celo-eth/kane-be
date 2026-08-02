@@ -6,6 +6,7 @@
       "name": "kane-be",
       "dependencies": {
         "@celo/attribution-tags": "^0.3.0",
+        "@mento-protocol/mento-sdk": "^3.3.1",
         "@x402/core": "^2.19.0",
         "@x402/evm": "^2.19.0",
         "@x402/fetch": "^2.19.0",
@@ -23,6 +24,8 @@
     "@adraffy/ens-normalize": ["@adraffy/ens-normalize@1.11.1", "", {}, "sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ=="],
 
     "@celo/attribution-tags": ["@celo/attribution-tags@0.3.0", "", { "dependencies": { "ox": "^0.10.0" }, "peerDependencies": { "viem": "^2" }, "optionalPeers": ["viem"] }, "sha512-6RwRqupxXmKt5GGnUkquViLta7VpyKRr4MZeoVnkMdSBpVurpy9UUd2ortephxustvjBa4iEUj/5+A2rLQgRhQ=="],
+
+    "@mento-protocol/mento-sdk": ["@mento-protocol/mento-sdk@3.3.1", "", { "dependencies": { "viem": "^2.21.44" } }, "sha512-A2sYzHV7vYamh6z7TC6T8lwQNgvrcOpJgQuajWi0B2hEJkTZ6Tv6K9/TGkINAx+8zWTayd2QGvzAz8IVsgtaLg=="],
 
     "@noble/ciphers": ["@noble/ciphers@1.3.0", "", {}, "sha512-2I0gnIVPtfnMw9ee9h1dJG7tp81+8Ob3OJb3Mv37rx5L40/b0i7djjCVvGOVqc9AEIQyvyu1i6ypKdFw8R8gQw=="],
 
