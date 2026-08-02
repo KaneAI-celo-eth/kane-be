@@ -11,11 +11,12 @@ allows — every transaction carrying KaneAI's attribution tag.
 | File | Role |
 | --- | --- |
 | `src/config.ts` | Env-driven config (network, keys, RPC, LLM, x402, CORS). |
-| `src/constants.ts` | Verified Celo registry (tokens, Aave V3 + Ubeswap venues, factory, attribution tag) — the public source of truth the prompt derives from. |
+| `src/constants.ts` | Verified Celo registry (tokens incl. Mento local stables, Aave V3 + Ubeswap + Mento venues, factory, attribution tag) — the public source of truth the prompt derives from. |
 | `src/chain.ts` | viem chain defs (Celo mainnet + Sepolia) + public / wallet clients. |
 | `src/attribution.ts` | ERC-8021 tagging — appends KaneAI's tag to every tx (Track 1 & 2 credit). |
 | `src/abi.ts` | Executor / factory / ERC-20 / Aave / Ubeswap ABIs. |
-| `src/executor.ts` | Per-user executor interaction: resolve the owner's executor, read its policy, dry-run a pull (`wouldAllowPull`), and build the `execute()` payload (owner-signed) or agent-sign it. Recipient is ALWAYS the owner. |
+| `src/executor.ts` | Per-user executor interaction: resolve the owner's executor, read its policy, dry-run a pull (`wouldAllowPull`), and build the `execute()` payload (owner-signed) or agent-sign it. Swaps are **multi-venue** — `quoteSwap` quotes BOTH Ubeswap V2 and Mento V3 and returns the best output. Recipient is ALWAYS the owner. |
+| `src/mento.ts` | Mento V3 swap venue (viem-native `@mento-protocol/mento-sdk`): route/quote/build for the Mento local stables (NGNm, COPm, BRLm, …) that have no Ubeswap pool. Surfaces friendly reasons for FX-market-closed / oracle-breaker reverts. Router allowlisted with the swap recipient bound to the owner (word 3). |
 | `src/llm.ts` | OpenAI-compatible chat client (default: Claude Haiku via dgrid.ai). |
 | `src/celo-facts.ts` | Curated core facts (addresses / venues) injected into every prompt, derived from `constants.ts` so the prompt can't drift from the code. |
 | `src/celopedia.ts` | Celopedia retrieval — injects the most relevant reference slice per query so answers stay grounded. |
