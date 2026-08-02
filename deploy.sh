@@ -24,8 +24,9 @@ fi
 echo "-> src/"
 rsync -az --delete -e ssh src/ "$VPS:$REMOTE/src/"
 
-echo "-> package.json  (run 'bun install' on the VPS if dependencies changed)"
+echo "-> package.json + lockfile"
 rsync -az -e ssh package.json "$VPS:$REMOTE/package.json"
+[ -f bun.lock ] && rsync -az -e ssh bun.lock "$VPS:$REMOTE/bun.lock"
 
 if [ -d "$REFS" ]; then
   echo "-> Celopedia grounding"
@@ -33,6 +34,9 @@ if [ -d "$REFS" ]; then
 else
   echo "!  $REFS not found — skipping grounding sync (standalone checkout)."
 fi
+
+echo "-> bun install (idempotent; picks up new/changed deps)"
+ssh "$VPS" "cd '$REMOTE' && bun install >/dev/null 2>&1 && echo '   deps ok'"
 
 echo "-> pm2 restart"
 ssh "$VPS" 'pm2 restart kane-be --update-env >/dev/null 2>&1 && echo "   online"'
