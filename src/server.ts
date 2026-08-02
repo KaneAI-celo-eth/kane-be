@@ -26,7 +26,13 @@ import {
   type BuiltExecute,
 } from "./executor";
 import { propose, type ProposedAction } from "./agent";
-import { buildPaymentMiddleware, x402Enabled } from "./x402/seller";
+import { buildPaymentMiddleware, facilitatorReachable, x402Enabled } from "./x402/seller";
+
+// Backstop: a flaky x402 facilitator (or any late async error) must never take the agent down.
+// Log unhandled rejections and keep serving /intent, /build, /health instead of crash-looping.
+process.on("unhandledRejection", (reason) => {
+  console.error("[kane-be] unhandledRejection — continuing:", reason);
+});
 
 const app = new Hono();
 
@@ -76,10 +82,17 @@ app.get("/health", (c) =>
   }),
 );
 
-// Seller flow (Track 2): when configured (API key + payTo), every `POST /intent` (one user prompt)
-// requires a 0.01 USDC payment. The /intent handler below runs only after payment settles.
+// Seller flow (Track 2): every `POST /intent` (one user prompt) requires a 0.01 USDC payment —
+// BUT only enable the paywall if the facilitator is reachable. On a facilitator outage we serve
+// prompts FREE this boot (the paywall resumes on the next restart once it's back) rather than
+// crash-looping the whole agent. The /intent handler below runs after payment settles when on.
 if (x402Enabled()) {
-  app.use(buildPaymentMiddleware());
+  if (await facilitatorReachable()) {
+    app.use(buildPaymentMiddleware());
+    console.log("[x402] facilitator reachable — paywall enabled on POST /intent");
+  } else {
+    console.warn("[x402] facilitator unreachable at boot — serving /intent FREE (paywall off this boot)");
+  }
 }
 
 // Read the on-chain per-token policy: /policy?executor=0x..&token=0x..

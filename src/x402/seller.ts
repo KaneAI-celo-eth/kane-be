@@ -8,7 +8,7 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { getAddress } from "viem";
 import { config } from "../config";
-import { facilitator, X402_NETWORK, X402_USDC } from "./facilitator";
+import { facilitator, FACILITATOR_URL, X402_NETWORK, X402_USDC } from "./facilitator";
 
 /** True when the seller side is configured (API key + receiving wallet) AND we're not on a local
  *  fork. x402 settles REAL mainnet USDC via the hosted facilitator, so it's auto-disabled when
@@ -20,6 +20,25 @@ export function x402Enabled(): boolean {
 
 /** The paid route — one user prompt to the agent. */
 export const PAID_ROUTE = "/intent";
+
+/**
+ * Boot-time probe: is the x402 facilitator reachable? The `@x402/*` payment middleware eagerly
+ * calls the facilitator's `/supported` at startup and THROWS if it can't load payment kinds — a
+ * facilitator outage (500) would otherwise crash-loop the whole agent (taking /intent, /build,
+ * /health down with it). We probe first and skip the paywall on failure, so prompts are served
+ * FREE during an outage instead of the service dying. Returns false on any error/timeout.
+ */
+export async function facilitatorReachable(timeoutMs = 6000): Promise<boolean> {
+  try {
+    const res = await fetch(`${FACILITATOR_URL}/supported`, {
+      headers: { "X-API-Key": config.x402.apiKey ?? "" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 /** Build the Hono payment middleware: `POST /intent` costs `config.x402.price` (default 0.01 USDC).
  *  Call only when x402Enabled(). Non-paid routes (/health, /policy, …) are untouched. */
