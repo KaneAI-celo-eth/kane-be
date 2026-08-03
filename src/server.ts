@@ -24,6 +24,7 @@ import {
   type BuiltExecute,
 } from "./executor";
 import { resolveLending } from "./lending";
+import { buildStake, CELO_TOKEN } from "./stcelo";
 import { propose, type ProposedAction } from "./agent";
 import { buildPaymentMiddleware, facilitatorReachable, PAID_ROUTE, x402Enabled } from "./x402/seller";
 
@@ -173,10 +174,14 @@ app.post("/intent", async (c) => {
   const res: Record<string, unknown> = { action: serializeAction(action) };
 
   // Supply/withdraw dry-run against the gate; answers/noops don't touch the chain.
-  if ((action.kind === "supply" || action.kind === "withdraw") && body.owner && isAddress(body.owner)) {
+  if (
+    (action.kind === "supply" || action.kind === "withdraw" || action.kind === "stake") &&
+    body.owner &&
+    isAddress(body.owner)
+  ) {
     try {
       const executor = await resolveExecutor(body.owner as Address);
-      const token = await pullToken(action.kind, action.asset);
+      const token = action.kind === "stake" ? CELO_TOKEN : await pullToken(action.kind, action.asset);
       res.executor = executor;
       res.dryRun = await wouldAllowPull(executor, token, action.amount);
     } catch (e) {
@@ -235,7 +240,7 @@ app.post("/execute", async (c) => {
     return c.json({ error: "intent or action required" }, 400);
   }
   // Only fund-moving actions execute; answers and noops never touch the chain.
-  if (action.kind !== "supply" && action.kind !== "withdraw" && action.kind !== "swap") {
+  if (action.kind !== "supply" && action.kind !== "withdraw" && action.kind !== "swap" && action.kind !== "stake") {
     return c.json({ action: serializeAction(action), executed: false });
   }
 
@@ -250,6 +255,10 @@ app.post("/execute", async (c) => {
       const r = await resolveLending(action.asset ?? "USDC", network);
       built = buildRebalance(r, action.kind, action.amount, owner);
       token = built.pulls[0]!.token; // asset for supply, a/mToken for withdraw — venue-resolved
+      pullAmount = action.amount;
+    } else if (action.kind === "stake") {
+      built = buildStake(action.amount);
+      token = built.pulls[0]!.token; // CELO
       pullAmount = action.amount;
     } else {
       const s = await buildSwap({ fromSymbol: action.from, toSymbol: action.to, amount: action.amount, owner, network });
@@ -296,6 +305,10 @@ app.post("/build", async (c) => {
       built = buildRebalance(r, action.kind, action.amount, owner);
       inputToken = built.pulls[0]!.token; // asset for supply, a/mToken for withdraw — venue-resolved
       inputAmount = action.amount;
+    } else if (action.kind === "stake") {
+      built = buildStake(action.amount);
+      inputToken = built.pulls[0]!.token; // CELO
+      inputAmount = action.amount;
     } else if (action.kind === "swap") {
       const s = await buildSwap({ fromSymbol: action.from, toSymbol: action.to, amount: action.amount, owner, network });
       built = s;
@@ -318,6 +331,7 @@ app.post("/build", async (c) => {
       pulls: built.pulls.map((p) => ({ token: p.token, amount: p.amount.toString() })),
       approvals: built.approvals.map((a) => ({ token: a.token, spender: a.spender, amount: a.amount.toString() })),
       calls: built.calls.map((cl) => ({ target: cl.target, value: cl.value.toString(), data: cl.data })),
+      ...(built.sweepTokens?.length ? { sweepTokens: built.sweepTokens } : {}),
       ...(quote
         ? { quote: { from: quote.fromSymbol, to: quote.toSymbol, venue: quote.venue, amountOutHuman: quote.amountOutHuman, hops: quote.path ? quote.path.length - 1 : 1 } }
         : {}),
@@ -337,7 +351,7 @@ function serializeAction(a: ProposedAction) {
   if (a.kind === "noop") return { kind: a.kind, reason: a.reason };
   if (a.kind === "answer") return { kind: a.kind, text: a.text };
   if (a.kind === "swap") return { kind: a.kind, from: a.from, to: a.to, amount: a.amount };
-  return { kind: a.kind, amount: a.amount.toString(), ...(a.asset ? { asset: a.asset } : {}) };
+  return { kind: a.kind, amount: a.amount.toString(), ...("asset" in a && a.asset ? { asset: a.asset } : {}) };
 }
 
 /** Wire → ProposedAction for the console's Execute button. Only fund-moving kinds are executable;
@@ -357,6 +371,16 @@ function deserializeAction(a: {
       if (amount <= 0n) return null;
       const asset = typeof a.asset === "string" && a.asset.trim() ? a.asset.trim() : undefined;
       return { kind: a.kind, amount, ...(asset ? { asset } : {}) };
+    } catch {
+      return null;
+    }
+  }
+  if (a.kind === "stake") {
+    if (!a.amount) return null;
+    try {
+      const amount = BigInt(a.amount);
+      if (amount <= 0n) return null;
+      return { kind: "stake", amount };
     } catch {
       return null;
     }

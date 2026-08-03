@@ -48,6 +48,9 @@ export interface BuiltExecute {
   pulls: { token: Address; amount: bigint }[];
   approvals: { token: Address; spender: Address; amount: bigint }[];
   calls: { target: Address; value: bigint; data: Hex }[];
+  /** Extra output tokens to delta-sweep to the owner (for calls whose output isn't recipient-bound,
+   *  e.g. stCELO `deposit()`). Absent/empty → the 4-arg execute (unchanged path for swaps/lending). */
+  sweepTokens?: Address[];
 }
 
 
@@ -481,11 +484,17 @@ export async function sendExecute(
   version: number,
   wallet?: WalletLike,
 ): Promise<Hex> {
-  const calldata = encodeFunctionData({
-    abi: kaneExecutorAbi,
-    functionName: "execute",
-    args: [built.pulls, built.approvals, built.calls, version],
-  });
+  const calldata = built.sweepTokens?.length
+    ? encodeFunctionData({
+        abi: kaneExecutorAbi,
+        functionName: "execute",
+        args: [built.pulls, built.approvals, built.calls, built.sweepTokens, version],
+      })
+    : encodeFunctionData({
+        abi: kaneExecutorAbi,
+        functionName: "execute",
+        args: [built.pulls, built.approvals, built.calls, version],
+      });
   const w: WalletLike = wallet ?? getWalletClient();
   return w.sendTransaction({ to: executor, data: tagCalldata(calldata), chain });
 }

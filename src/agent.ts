@@ -14,6 +14,7 @@ export type ProposedAction =
   | { kind: "answer"; text: string }
   | { kind: "supply"; amount: bigint; asset?: string }
   | { kind: "withdraw"; amount: bigint; asset?: string }
+  | { kind: "stake"; amount: bigint }
   | { kind: "swap"; from: string; to: string; amount: string }
   | { kind: "noop"; reason: string };
 
@@ -25,12 +26,14 @@ Choose exactly ONE shape:
   {"kind":"answer","text":"<a short, helpful reply grounded ONLY in the Celo facts below>"}
   {"kind":"supply","amount":"<integer string, the ASSET's base units>","asset":"<SYMBOL, optional, default USDC>"}
   {"kind":"withdraw","amount":"<integer string, the ASSET's base units>","asset":"<SYMBOL, optional, default USDC>"}
+  {"kind":"stake","amount":"<integer string, CELO base units, 18 decimals>"}
   {"kind":"swap","from":"<SYMBOL>","to":"<SYMBOL>","amount":"<human decimal of the FROM token, e.g. \\"100\\">"}
   {"kind":"noop","reason":"<why nothing can be done>"}
 
 How to choose:
 - If the user asks a QUESTION or wants information / advice (price, yield, "what is", "how do I", "where", "compare", "explain") → return "answer". Give a factual reply grounded in the Celo facts provided. When a "LIVE DATA" block is present, quote those exact numbers (e.g. the current Aave USDC supply APR). If the user asks about THEIR balance / how much they have, and the LIVE DATA block lists the connected wallet's balances, answer directly with those exact numbers — NEVER ask the user for their wallet address (it is already connected). If a specific number is NOT given, DO NOT invent it — say what you do know and point to the action you can take (supplying USDC into Aave V3 to earn yield). Never fabricate APYs, prices, or addresses.
 - If the user gives a COMMAND to move funds ("put / move / deposit / withdraw N <ASSET>") → return "supply" or "withdraw". amount = the ASSET's BASE UNITS, a positive integer (USDC/USDT = 6 decimals, so 1 USDC = "1000000"; USDm/EURm/CELO/BRLm = 18 decimals, so 1 USDm = "1000000000000000000"). The asset field is the token SYMBOL; OMIT it (or use "USDC") for the default USDC.
+- "stake" stakes CELO into stCELO (liquid staking) → you receive stCELO, which accrues value over time (~0.9 stCELO per CELO at the current rate). amount = CELO BASE UNITS (18 decimals, 1 CELO = "1000000000000000000"). Only CELO is stakeable; "stake" takes NO asset field. Unstaking is delayed and not yet supported — do not promise instant unstake.
 - "supply"/"withdraw" lend an asset into/out of the best lending venue (Aave V3 or Moola — the runtime picks the higher supply APR automatically). **Lendable assets: USDC, USDT (Aave only), USDm, EURm, CELO (Aave or Moola), BRLm (Moola only).** If the user names a non-lendable asset, return "answer" listing the lendable ones. "swap" trades one token for another across Ubeswap V2, Mento V3, AND Uniswap V3 (the runtime picks the best price automatically — Uniswap V3 is the deepest and always-on) — supported tokens are USDC, USDT, CELO, USDm (Mento Dollar, formerly cUSD), EURm (Mento Euro, formerly cEUR), and the Mento local-currency stables NGNm (Nigerian Naira), COPm (Colombian Peso), BRLm (Brazilian Real), KESm (Kenyan Shilling), GHSm (Ghanaian Cedi), ZARm (South African Rand), GBPm, CHFm, JPYm, AUDm, CADm, PHPm, XOFm. from/to are these SYMBOLS; amount is a human decimal of the FROM token. Treat cUSD as USDm and cEUR as EURm. If the user names a token NOT in this list, return "answer" explaining which tokens are supported. IMPORTANT: the Mento FX/regional stables (NGNm, EURm, GBPm and the other local currencies) only trade during Mento FX-market hours and when their oracle is live — if a pair is temporarily unavailable the runtime returns a clear reason; propose the swap anyway (the runtime + policy decide), but never promise a regional swap will always succeed, and if asked, explain it depends on Mento market hours.
 - NEVER output an address or any 0x / "to" / "asset" / "pool" field — the runtime resolves ALL addresses and binds recipients to the owner.
 - For "answer", be as complete and helpful as the question genuinely needs — explain fully, and use short paragraphs or a bulleted list ("- ") when it makes the answer clearer. Do NOT truncate a real answer to save space, and do NOT pad a simple one. The whole answer is ONE JSON string in "text"; write line breaks as \\n so the JSON stays valid.
@@ -105,7 +108,7 @@ export function parseAction(raw: string): ProposedAction {
     return { kind: "answer", text: text.trim() };
   }
 
-  if (o.kind === "supply" || o.kind === "withdraw") {
+  if (o.kind === "supply" || o.kind === "withdraw" || o.kind === "stake") {
     const amt = o.amount;
     if (typeof amt !== "string" && typeof amt !== "number") {
       return noop("missing or non-scalar amount from LLM");
@@ -117,6 +120,7 @@ export function parseAction(raw: string): ProposedAction {
       return noop("non-integer amount from LLM");
     }
     if (amount <= 0n) return noop("amount must be a positive integer");
+    if (o.kind === "stake") return { kind: "stake", amount };
     const asset = typeof o.asset === "string" && o.asset.trim() ? o.asset.trim() : undefined;
     return { kind: o.kind, amount, ...(asset ? { asset } : {}) };
   }

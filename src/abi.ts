@@ -6,6 +6,10 @@ import { parseAbi } from "viem";
 export const kaneExecutorAbi = parseAbi([
   // agent action: atomic pull → bounded-approve → allowlisted calls → reset → sweep-back
   "function execute((address token, uint256 amount)[] pulls, (address token, address spender, uint256 amount)[] approvals, (address target, uint256 value, bytes data)[] calls, uint32 expectedVersion)",
+  // 5-arg overload: same, plus explicit `sweepTokens` (extra output tokens to delta-sweep to the
+  // owner) — used when a call's output isn't recipient-bound (e.g. stCELO `deposit()` mints to the
+  // executor, then the minted stCELO is swept to the owner).
+  "function execute((address token, uint256 amount)[] pulls, (address token, address spender, uint256 amount)[] approvals, (address target, uint256 value, bytes data)[] calls, address[] sweepTokens, uint32 expectedVersion)",
   // per-token policy struct (KanePolicy.TokenPolicy)
   "function tokenPolicy(address token) view returns ((uint128 perTxCap, uint128 budget, uint128 spent, uint128 windowCap, uint128 windowSpent, uint64 windowDuration, uint64 windowStart))",
   // off-chain dry-run
