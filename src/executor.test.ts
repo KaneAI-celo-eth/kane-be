@@ -4,6 +4,7 @@ import { aavePoolAbi } from "./abi";
 import { AAVE, TOKENS } from "./constants";
 import { attributionSuffix } from "./attribution";
 import { buildRebalance, sendExecute, type BuiltExecute } from "./executor";
+import type { ResolvedLending } from "./lending";
 
 const OWNER = getAddress("0x1111111111111111111111111111111111111111");
 const AUSDC = getAddress("0x2222222222222222222222222222222222222222");
@@ -14,10 +15,20 @@ const USDC = getAddress(TOKENS.celo.USDC!.address);
 const POOL = getAddress(AAVE.celo!.pool);
 const AMOUNT = 100_000_000n; // 100 USDC (6 decimals)
 
+// A pre-resolved Aave/USDC venue (buildRebalance is pure — venue resolution is server-side).
+const RESOLVED_USDC: ResolvedLending = {
+  venue: "aave",
+  pool: POOL,
+  assetSymbol: "USDC",
+  assetAddress: USDC,
+  aToken: AUSDC,
+  aprPct: null,
+};
+
 const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 describe("buildRebalance — supply", () => {
-  const built = buildRebalance({ kind: "supply", amount: AMOUNT, owner: OWNER, network: "celo" });
+  const built = buildRebalance(RESOLVED_USDC, "supply", AMOUNT, OWNER);
 
   test("pulls USDC and approves the pool", () => {
     expect(built.pulls).toHaveLength(1);
@@ -43,13 +54,7 @@ describe("buildRebalance — supply", () => {
 });
 
 describe("buildRebalance — withdraw", () => {
-  const built = buildRebalance({
-    kind: "withdraw",
-    amount: AMOUNT,
-    owner: OWNER,
-    network: "celo",
-    aToken: AUSDC,
-  });
+  const built = buildRebalance(RESOLVED_USDC, "withdraw", AMOUNT, OWNER);
 
   test("pulls aUSDC and needs no approval", () => {
     expect(built.pulls).toHaveLength(1);
@@ -66,23 +71,13 @@ describe("buildRebalance — withdraw", () => {
     expect(eq(args[2] as string, OWNER)).toBe(true); // to (word index 2)
   });
 
-  test("withdraw without aToken throws", () => {
-    expect(() => buildRebalance({ kind: "withdraw", amount: AMOUNT, owner: OWNER, network: "celo" })).toThrow();
-  });
 });
 
 describe("buildRebalance — recipient is always the owner", () => {
-  test("a caller-supplied recipient cannot override the owner", () => {
-    // Even if a rogue caller smuggles a `recipient` field, the builder only ever
-    // encodes `owner` as the Aave recipient word.
-    const built = buildRebalance({
-      kind: "supply",
-      amount: AMOUNT,
-      owner: OWNER,
-      network: "celo",
-      // @ts-expect-error — recipient is not part of RebalanceParams; must be ignored.
-      recipient: ATTACKER,
-    });
+  test("the recipient word is always the owner, never anyone else", () => {
+    // buildRebalance only ever encodes the explicit `owner` as the Aave recipient word;
+    // there is no caller-supplied recipient path.
+    const built = buildRebalance(RESOLVED_USDC, "supply", AMOUNT, OWNER);
     const { args } = decodeFunctionData({ abi: aavePoolAbi, data: built.calls[0]!.data });
     expect(eq(args[2] as string, OWNER)).toBe(true);
     expect(eq(args[2] as string, ATTACKER)).toBe(false);
@@ -91,7 +86,7 @@ describe("buildRebalance — recipient is always the owner", () => {
 
 describe("sendExecute — attribution suffix", () => {
   test("sent calldata ends with the ERC-8021 attribution suffix", async () => {
-    const built: BuiltExecute = buildRebalance({ kind: "supply", amount: AMOUNT, owner: OWNER, network: "celo" });
+    const built: BuiltExecute = buildRebalance(RESOLVED_USDC, "supply", AMOUNT, OWNER);
 
     let captured: Hex | undefined;
     const mockWallet = {

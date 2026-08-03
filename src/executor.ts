@@ -13,7 +13,6 @@ import { config, type Network } from "./config";
 import { AAVE, TOKENS, UBESWAP } from "./constants";
 import {
   aaveDataProviderAbi,
-  aavePoolAbi,
   erc20Abi,
   kaneExecutorAbi,
   kaneExecutorFactoryAbi,
@@ -24,6 +23,12 @@ import {
 import { tagCalldata } from "./attribution";
 import { quoteMento, mentoReason, buildMentoSwap } from "./mento";
 import { quoteUniswap, buildUniswapSwap } from "./univ3";
+import {
+  buildSupplyCall,
+  buildWithdrawCall,
+  type LendingVenueName,
+  type ResolvedLending,
+} from "./lending";
 
 // ---- types -----------------------------------------------------------------
 
@@ -45,14 +50,6 @@ export interface BuiltExecute {
   calls: { target: Address; value: bigint; data: Hex }[];
 }
 
-export interface RebalanceParams {
-  kind: "supply" | "withdraw";
-  amount: bigint;
-  owner: Address;
-  network: Network;
-  /** aToken (aUSDC) — REQUIRED for withdraw. Resolve via {@link resolveAToken}. */
-  aToken?: Address;
-}
 
 /** Minimal wallet surface used by {@link sendExecute} (injectable for tests). */
 export interface WalletLike {
@@ -197,38 +194,27 @@ export async function readBalances(
  *   supply:   pulls [{USDC, amt}], approvals [{USDC, pool, amt}], calls [supply(USDC, amt, owner, 0)]
  *   withdraw: pulls [{aUSDC, amt}], approvals [],                 calls [withdraw(USDC, amt, owner)]
  */
-export function buildRebalance(params: RebalanceParams): BuiltExecute {
-  const { kind, amount, owner, network } = params;
-  const aave = AAVE[network];
-  if (!aave) throw new Error(`Aave not configured for network ${network}`);
-  const usdc = TOKENS[network]?.USDC;
-  if (!usdc) throw new Error(`USDC not configured for network ${network}`);
-  const pool = aave.pool;
-
+export function buildRebalance(
+  resolved: ResolvedLending,
+  kind: "supply" | "withdraw",
+  amount: bigint,
+  owner: Address,
+): BuiltExecute & { venue: LendingVenueName; assetSymbol: string } {
+  const base = { venue: resolved.venue, assetSymbol: resolved.assetSymbol };
   if (kind === "supply") {
-    const data = encodeFunctionData({
-      abi: aavePoolAbi,
-      functionName: "supply",
-      args: [usdc.address, amount, owner, 0],
-    });
+    const { pool, data } = buildSupplyCall(resolved, amount, owner);
     return {
-      pulls: [{ token: usdc.address, amount }],
-      approvals: [{ token: usdc.address, spender: pool, amount }],
+      ...base,
+      pulls: [{ token: resolved.assetAddress, amount }],
+      approvals: [{ token: resolved.assetAddress, spender: pool, amount }],
       calls: [{ target: pool, value: 0n, data }],
     };
   }
-
-  // withdraw
-  if (!params.aToken) {
-    throw new Error("withdraw requires aToken (aUSDC) — resolve via resolveAToken(network)");
-  }
-  const data = encodeFunctionData({
-    abi: aavePoolAbi,
-    functionName: "withdraw",
-    args: [usdc.address, amount, owner],
-  });
+  // withdraw — pull the a/mToken, call withdraw(asset, amount, owner)
+  const { pool, data } = buildWithdrawCall(resolved, amount, owner);
   return {
-    pulls: [{ token: params.aToken, amount }],
+    ...base,
+    pulls: [{ token: resolved.aToken, amount }],
     approvals: [],
     calls: [{ target: pool, value: 0n, data }],
   };

@@ -106,6 +106,17 @@ export const AAVE: Partial<Record<Network, { pool: Address; dataProvider: Addres
 };
 
 /**
+ * Moola Market — a 2nd lending venue (Aave **V2** fork). Lends CELO/USDm/EURm/BRLm (NOT USDC/USDT/
+ * WETH — so it complements Aave rather than overlapping on USDC). `deposit`/`withdraw` bind the
+ * recipient (`onBehalfOf`/`to`) to the owner at head word 2, same as Aave — no contract change.
+ * Verified on-chain 2026-08-03: LendingPool below, reserves CELO/USDm/EURm/BRLm. ⚠️ V2's
+ * `getReserveData` struct differs from V3 (see lending.ts).
+ */
+export const MOOLA: Partial<Record<Network, Address>> = {
+  celo: "0x970b12522CA9b4054807a2c5B736149a5BE6f670",
+};
+
+/**
  * Ubeswap V2 (Uniswap-V2 fork) on Celo mainnet — the swap venue. Sourced from Celopedia
  * `references/defi-protocols.md` → Ubeswap. The V2 router's `swapExactTokensForTokens(...,
  * address to, uint deadline)` puts `to` at a STATIC head word (index 3), so the executor can

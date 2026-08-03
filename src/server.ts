@@ -10,7 +10,6 @@ import { cors } from "hono/cors";
 import { type Address, isAddress } from "viem";
 import { ATTRIBUTION_TAG, config } from "./config";
 import { agentAddress, chain } from "./chain";
-import { TOKENS } from "./constants";
 import {
   buildRebalance,
   buildSwap,
@@ -19,12 +18,12 @@ import {
   readSupplyApr,
   readTokenPolicy,
   readVersion,
-  resolveAToken,
   resolveExecutor,
   sendExecute,
   wouldAllowPull,
   type BuiltExecute,
 } from "./executor";
+import { resolveLending } from "./lending";
 import { propose, type ProposedAction } from "./agent";
 import { buildPaymentMiddleware, facilitatorReachable, PAID_ROUTE, x402Enabled } from "./x402/seller";
 
@@ -177,7 +176,7 @@ app.post("/intent", async (c) => {
   if ((action.kind === "supply" || action.kind === "withdraw") && body.owner && isAddress(body.owner)) {
     try {
       const executor = await resolveExecutor(body.owner as Address);
-      const token = await pullToken(action.kind);
+      const token = await pullToken(action.kind, action.asset);
       res.executor = executor;
       res.dryRun = await wouldAllowPull(executor, token, action.amount);
     } catch (e) {
@@ -218,7 +217,7 @@ app.post("/execute", async (c) => {
   const body = await c.req.json<{
     intent?: string;
     owner?: string;
-    action?: { kind?: string; amount?: string; from?: string; to?: string };
+    action?: { kind?: string; amount?: string; from?: string; to?: string; asset?: string };
   }>();
   if (!body?.owner || !isAddress(body.owner)) return c.json({ error: "invalid or missing owner" }, 400);
   const owner = body.owner as Address;
@@ -247,15 +246,11 @@ app.post("/execute", async (c) => {
     let built: BuiltExecute;
     let token: Address;
     let pullAmount: bigint;
-    if (action.kind === "supply") {
-      token = usdcAddress();
+    if (action.kind === "supply" || action.kind === "withdraw") {
+      const r = await resolveLending(action.asset ?? "USDC", network);
+      built = buildRebalance(r, action.kind, action.amount, owner);
+      token = built.pulls[0]!.token; // asset for supply, a/mToken for withdraw — venue-resolved
       pullAmount = action.amount;
-      built = buildRebalance({ kind: "supply", amount: action.amount, owner, network });
-    } else if (action.kind === "withdraw") {
-      const aToken = await resolveAToken(network);
-      token = aToken;
-      pullAmount = action.amount;
-      built = buildRebalance({ kind: "withdraw", amount: action.amount, owner, network, aToken });
     } else {
       const s = await buildSwap({ fromSymbol: action.from, toSymbol: action.to, amount: action.amount, owner, network });
       built = s;
@@ -281,7 +276,7 @@ app.post("/execute", async (c) => {
 app.post("/build", async (c) => {
   const body = await c.req.json<{
     owner?: string;
-    action?: { kind?: string; amount?: string; from?: string; to?: string };
+    action?: { kind?: string; amount?: string; from?: string; to?: string; asset?: string };
   }>();
   if (!body?.owner || !isAddress(body.owner)) return c.json({ error: "invalid or missing owner" }, 400);
   const action = body.action?.kind ? deserializeAction(body.action) : null;
@@ -296,14 +291,10 @@ app.post("/build", async (c) => {
     let inputAmount: bigint;
     let quote: Awaited<ReturnType<typeof buildSwap>>["quote"] | undefined;
 
-    if (action.kind === "supply") {
-      built = buildRebalance({ kind: "supply", amount: action.amount, owner, network });
-      inputToken = usdcAddress();
-      inputAmount = action.amount;
-    } else if (action.kind === "withdraw") {
-      const aToken = await resolveAToken(network);
-      built = buildRebalance({ kind: "withdraw", amount: action.amount, owner, network, aToken });
-      inputToken = aToken;
+    if (action.kind === "supply" || action.kind === "withdraw") {
+      const r = await resolveLending(action.asset ?? "USDC", network);
+      built = buildRebalance(r, action.kind, action.amount, owner);
+      inputToken = built.pulls[0]!.token; // asset for supply, a/mToken for withdraw — venue-resolved
       inputAmount = action.amount;
     } else if (action.kind === "swap") {
       const s = await buildSwap({ fromSymbol: action.from, toSymbol: action.to, amount: action.amount, owner, network });
@@ -337,33 +328,35 @@ app.post("/build", async (c) => {
 });
 
 /** The token pulled for a given action kind: USDC for supply, aUSDC for withdraw. */
-async function pullToken(kind: "supply" | "withdraw"): Promise<Address> {
-  return kind === "supply" ? usdcAddress() : resolveAToken(config.network);
-}
-
-function usdcAddress(): Address {
-  const usdc = TOKENS[config.network]?.USDC;
-  if (!usdc) throw new Error(`USDC not configured for network ${config.network}`);
-  return usdc.address;
+async function pullToken(kind: "supply" | "withdraw", asset?: string): Promise<Address> {
+  const r = await resolveLending(asset ?? "USDC", config.network);
+  return kind === "supply" ? r.assetAddress : r.aToken;
 }
 
 function serializeAction(a: ProposedAction) {
   if (a.kind === "noop") return { kind: a.kind, reason: a.reason };
   if (a.kind === "answer") return { kind: a.kind, text: a.text };
   if (a.kind === "swap") return { kind: a.kind, from: a.from, to: a.to, amount: a.amount };
-  return { kind: a.kind, amount: a.amount.toString() };
+  return { kind: a.kind, amount: a.amount.toString(), ...(a.asset ? { asset: a.asset } : {}) };
 }
 
 /** Wire → ProposedAction for the console's Execute button. Only fund-moving kinds are executable;
  *  anything else (or malformed) returns null so the caller rejects it. The action is still dry-run
  *  against the on-chain gate before sending — your policy decides. */
-function deserializeAction(a: { kind?: string; amount?: string; from?: string; to?: string }): ProposedAction | null {
+function deserializeAction(a: {
+  kind?: string;
+  amount?: string;
+  from?: string;
+  to?: string;
+  asset?: string;
+}): ProposedAction | null {
   if (a.kind === "supply" || a.kind === "withdraw") {
     if (!a.amount) return null;
     try {
       const amount = BigInt(a.amount);
       if (amount <= 0n) return null;
-      return { kind: a.kind, amount };
+      const asset = typeof a.asset === "string" && a.asset.trim() ? a.asset.trim() : undefined;
+      return { kind: a.kind, amount, ...(asset ? { asset } : {}) };
     } catch {
       return null;
     }
