@@ -23,6 +23,7 @@ import {
 } from "./abi";
 import { tagCalldata } from "./attribution";
 import { quoteMento, mentoReason, buildMentoSwap } from "./mento";
+import { quoteUniswap, buildUniswapSwap } from "./univ3";
 
 // ---- types -----------------------------------------------------------------
 
@@ -238,7 +239,7 @@ export function buildRebalance(params: RebalanceParams): BuiltExecute {
 const SWAP_SLIPPAGE_BPS = 100n; // 1% max slippage → amountOutMin
 const MAX_PRICE_IMPACT_BPS = 1000n; // guard: reject if amountIn > 10% of the input-token pool reserve
 
-export type SwapVenue = "ubeswap" | "mento";
+export type SwapVenue = "ubeswap" | "mento" | "uniswap";
 
 export interface SwapQuote {
   /** Which venue won the best-output comparison. */
@@ -249,6 +250,8 @@ export interface SwapQuote {
   toAddress: Address;
   /** Ubeswap route (present only when `venue === "ubeswap"`). */
   path?: Address[];
+  /** Uniswap V3 fee tier that won (present only when `venue === "uniswap"`). */
+  fee?: number;
   amountIn: bigint;
   amountOut: bigint;
   amountOutMin: bigint;
@@ -363,47 +366,47 @@ export async function quoteSwap(
   if (amountIn <= 0n) throw new Error("amount must be positive");
 
   const reasons: string[] = [];
-  let ube: { path: Address[]; amountOut: bigint } | undefined;
+  type Candidate = { venue: SwapVenue; amountOut: bigint; path?: Address[]; fee?: number };
+  const candidates: Candidate[] = [];
+
   try {
-    ube = await quoteUbeswap(from.address, to.address, amountIn, network);
+    const q = await quoteUbeswap(from.address, to.address, amountIn, network);
+    candidates.push({ venue: "ubeswap", amountOut: q.amountOut, path: q.path });
   } catch (e) {
     reasons.push(`Ubeswap: ${(e as Error).message}`);
   }
-  let mento: { amountOut: bigint } | undefined;
   try {
     const q = await quoteMento(from.address, to.address, amountIn, network);
-    mento = { amountOut: q.amountOut };
+    candidates.push({ venue: "mento", amountOut: q.amountOut });
   } catch (e) {
     reasons.push(`Mento: ${mentoReason((e as Error).message)}`);
   }
-
-  // Pick the venue with the larger output; single-venue resolves to whichever exists.
-  let venue: SwapVenue;
-  let amountOut: bigint;
-  let path: Address[] | undefined;
-  if (ube && (!mento || ube.amountOut >= mento.amountOut)) {
-    venue = "ubeswap";
-    amountOut = ube.amountOut;
-    path = ube.path;
-  } else if (mento) {
-    venue = "mento";
-    amountOut = mento.amountOut;
-  } else {
-    throw new Error(`no swap route for ${fromSymbol}→${toSymbol} — ${reasons.join("; ")}`);
+  try {
+    const q = await quoteUniswap(from.address, to.address, amountIn, network);
+    candidates.push({ venue: "uniswap", amountOut: q.amountOut, fee: q.fee });
+  } catch (e) {
+    reasons.push(`Uniswap V3: ${(e as Error).message}`);
   }
 
-  const amountOutMin = (amountOut * (10000n - SWAP_SLIPPAGE_BPS)) / 10000n;
+  if (candidates.length === 0) {
+    throw new Error(`no swap route for ${fromSymbol}→${toSymbol} — ${reasons.join("; ")}`);
+  }
+  // Best output across all venues wins.
+  const best = candidates.reduce((a, b) => (b.amountOut > a.amountOut ? b : a));
+
+  const amountOutMin = (best.amountOut * (10000n - SWAP_SLIPPAGE_BPS)) / 10000n;
   return {
-    venue,
+    venue: best.venue,
     fromSymbol: from.symbol, // canonical (e.g. "USDm")
     toSymbol: to.symbol,
     fromAddress: from.address,
     toAddress: to.address,
-    path,
+    path: best.path,
+    fee: best.fee,
     amountIn,
-    amountOut,
+    amountOut: best.amountOut,
     amountOutMin,
-    amountOutHuman: formatUnits(amountOut, to.decimals),
+    amountOutHuman: formatUnits(best.amountOut, to.decimals),
   };
 }
 
@@ -434,6 +437,25 @@ export async function buildSwap(params: {
       owner: params.owner,
       slippageBps: SWAP_SLIPPAGE_BPS,
       deadlineSeconds: params.deadlineSeconds,
+      network,
+    });
+    return {
+      quote,
+      pulls: [{ token: tokenIn, amount: quote.amountIn }],
+      approvals: [{ token: tokenIn, spender: router, amount: quote.amountIn }],
+      calls: [{ target: router, value: 0n, data }],
+    };
+  }
+
+  if (quote.venue === "uniswap") {
+    if (quote.fee === undefined) throw new Error("missing Uniswap V3 fee tier");
+    const { router, data } = buildUniswapSwap({
+      fromAddress: quote.fromAddress,
+      toAddress: quote.toAddress,
+      amountIn: quote.amountIn,
+      amountOutMin: quote.amountOutMin,
+      fee: quote.fee,
+      owner: params.owner,
       network,
     });
     return {
