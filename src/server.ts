@@ -392,4 +392,44 @@ function deserializeAction(a: {
   return null;
 }
 
-export default { port: config.port, fetch: app.fetch };
+/**
+ * TLS terminates at nginx, so this process receives plain http and Hono's `c.req.url` says
+ * `http://…`. The x402 payment middleware copies that URL straight into the 402's
+ * `resource.url`, which meant every payment-requirements header advertised
+ * `http://kane-api…/intent` for a service only reachable over https. A buyer that matches on
+ * the resource URL, or any tooling that follows it, is pointed at a scheme that does not answer.
+ *
+ * Rewriting the Request here rather than in a Hono middleware is deliberate: the payment
+ * middleware reads the URL before any route handler runs, so the correction has to land before
+ * Hono sees the request at all.
+ *
+ * `x-forwarded-proto` is trusted only to upgrade http→https, never to downgrade, so a spoofed
+ * header cannot make the paywall advertise a plaintext resource. `PUBLIC_ORIGIN` is the escape
+ * hatch for a proxy that does not set the header — set it to the public origin and every request
+ * is rewritten to that host and scheme.
+ */
+const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN ?? "").trim();
+
+export function publicUrlFor(req: Request): string {
+  if (PUBLIC_ORIGIN) {
+    const url = new URL(req.url);
+    const pub = new URL(PUBLIC_ORIGIN);
+    url.protocol = pub.protocol;
+    url.host = pub.host;
+    return url.toString();
+  }
+  if (req.headers.get("x-forwarded-proto") === "https" && req.url.startsWith("http://")) {
+    const url = new URL(req.url);
+    url.protocol = "https:";
+    return url.toString();
+  }
+  return req.url;
+}
+
+const fetchBehindProxy = (req: Request, ...rest: unknown[]) => {
+  const corrected = publicUrlFor(req);
+  const forwarded = corrected === req.url ? req : new Request(corrected, req);
+  return (app.fetch as (r: Request, ...a: unknown[]) => Response | Promise<Response>)(forwarded, ...rest);
+};
+
+export default { port: config.port, fetch: fetchBehindProxy };
